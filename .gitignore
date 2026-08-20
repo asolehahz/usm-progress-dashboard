@@ -1,0 +1,12 @@
+.secrets/
+.streamlit/secrets.toml
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+*.csv
+sheet_html.txt
+
+# Never include Django / parent project files
+../
