@@ -216,6 +216,29 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str, caption: st
     st.plotly_chart(fig, width="stretch")
 
 
+def _campus_page_runner(campus: str):
+    def _run():
+        st.session_state["selected_campus"] = campus
+        render_campus_detail(_load_or_fail(), campus=campus)
+
+    return _run
+
+
+def _campus_url(name: str) -> str:
+    return name.lower().replace(" ", "-")
+
+
+CAMPUS_PAGES = {
+    name: st.Page(
+        _campus_page_runner(name),
+        title=name,
+        icon=CAMPUS_ICONS.get(name, "🏫"),
+        url_path=_campus_url(name),
+    )
+    for name in campus_sheet_names()
+}
+
+
 def render_dashboard(parsed: dict[str, dict]):
     st.header("Campus Overview")
     st.caption(
@@ -238,9 +261,12 @@ def render_dashboard(parsed: dict[str, dict]):
                 """,
                 unsafe_allow_html=True,
             )
-            if st.button("Check daily data →", key=f"campus_btn_{campus}", width="stretch"):
-                st.session_state["selected_campus"] = campus
-                st.switch_page(campus.lower().replace(" ", "-"))
+            st.page_link(
+                CAMPUS_PAGES[campus],
+                label="Check daily data →",
+                icon=CAMPUS_ICONS.get(campus, "🏫"),
+                use_container_width=True,
+            )
 
     campus_options = ["All campuses (combined)"] + campus_sheet_names()
     selected_campus = st.selectbox(
@@ -482,14 +508,6 @@ def page_dashboard():
     render_dashboard(_load_or_fail())
 
 
-def page_campus(campus: str):
-    def _run():
-        st.session_state["selected_campus"] = campus
-        render_campus_detail(_load_or_fail(), campus=campus)
-
-    return _run
-
-
 def page_overall():
     render_overall_data(_load_or_fail())
 
@@ -520,15 +538,7 @@ def main():
             "Overview": [
                 st.Page(page_dashboard, title="Dashboard", icon="📊", default=True),
             ],
-            "Check Daily Data": [
-                st.Page(
-                    page_campus(name),
-                    title=name,
-                    icon=CAMPUS_ICONS.get(name, "🏫"),
-                    url_path=name.lower().replace(" ", "-"),
-                )
-                for name in campus_sheet_names()
-            ],
+            "Check Daily Data": list(CAMPUS_PAGES.values()),
             "More": [
                 st.Page(page_overall, title="Overall Data", icon="📈"),
                 st.Page(page_history, title="Daily History", icon="🗂️"),
