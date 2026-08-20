@@ -198,7 +198,7 @@ def parse_progress_sheet(
 
 
 def available_dates(df: pd.DataFrame) -> list[str]:
-    """Extract all detected date blocks from one campus sheet."""
+    """Extract all detected date blocks from one campus sheet (public API)."""
     if df is None or df.empty:
         return []
     header_idx = _detect_header_row_index(df)
@@ -212,6 +212,7 @@ def available_dates(df: pd.DataFrame) -> list[str]:
 def campus_date_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
     """
     Build an Excel-like snapshot (DONE/TOTAL/PERCENTAGE rows) for one campus date.
+    Public API used by Check Daily Data pages.
     Returns columns: Location, Progress, <activities...>
     """
     if df is None or df.empty:
@@ -250,6 +251,18 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
         rows.append(row_data)
 
     return pd.DataFrame(rows)
+
+
+__all__ = [
+    "LocationProgress",
+    "available_dates",
+    "campus_date_snapshot",
+    "parse_progress_sheet",
+    "sheet_overall_percent",
+    "campus_sheets_summary",
+    "aggregate_overall_by_date",
+    "locations_activity_timeseries",
+]
 
 
 def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:

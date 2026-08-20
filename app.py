@@ -190,7 +190,7 @@ def render_dashboard(parsed: dict[str, dict]):
                 """,
                 unsafe_allow_html=True,
             )
-            if st.button("View campus details →", key=f"campus_btn_{campus}", use_container_width=True):
+            if st.button("View campus details →", key=f"campus_btn_{campus}", width="stretch"):
                 st.session_state["selected_campus"] = campus
                 st.switch_page(campus.lower().replace(" ", "-"))
 
@@ -228,7 +228,7 @@ def render_dashboard(parsed: dict[str, dict]):
             font=dict(color="#4B2876"),
             colorway=CHART_COLORS,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
@@ -268,7 +268,7 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
         if snapshot.empty:
             st.info("No DONE/TOTAL/PERCENTAGE rows found for this date block.")
         else:
-            st.dataframe(snapshot, use_container_width=True, hide_index=True)
+            st.dataframe(snapshot, width="stretch", hide_index=True)
 
     fig = px.line(
         ts,
@@ -287,7 +287,7 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
         plot_bgcolor="#FAFAFA",
         font=dict(color="#4B2876"),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     with st.expander("Location breakdown (latest)"):
         rows = []
@@ -300,7 +300,7 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
                     "Overall %": f"{loc.overall_percent:.1f}%",
                 }
             )
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def render_overall_data(parsed: dict[str, dict]):
@@ -337,7 +337,7 @@ def render_overall_data(parsed: dict[str, dict]):
     for act in ACTIVITIES:
         if act in display.columns:
             display[act] = display[act].apply(lambda x: f"{x:.1f}%" if x is not None else "—")
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(display, width="stretch", hide_index=True)
 
     if selected == "All campuses (combined)":
         st.subheader("Latest % by campus")
@@ -366,7 +366,7 @@ def render_overall_data(parsed: dict[str, dict]):
                 snap[act] = f"{val:.1f}%" if val is not None else "—"
             snap_rows.append(snap)
         if snap_rows:
-            st.dataframe(snap_rows, use_container_width=True, hide_index=True)
+            st.dataframe(snap_rows, width="stretch", hide_index=True)
 
 
 def render_history():
@@ -404,7 +404,7 @@ def render_history():
                     if urls:
                         for url in [u.strip() for u in urls.split(",") if u.strip()]:
                             try:
-                                st.image(url, use_container_width=True)
+                                st.image(url, width="stretch")
                             except Exception:
                                 st.markdown(f"[Photo link]({url})")
 
