@@ -241,33 +241,24 @@ CAMPUS_PAGES = {
 def render_dashboard(parsed: dict[str, dict]):
     st.header("Dashboard")
 
-    campus_options = ["All campuses (combined)"] + campus_sheet_names()
     selected_campus = st.selectbox(
         "Select campus to view average percentage",
-        options=campus_options,
+        options=campus_sheet_names(),
         key="dashboard_campus_select",
     )
 
-    if selected_campus == "All campuses (combined)":
-        overall = aggregate_overall_by_date(parsed)
-        render_activity_average_panel(
-            overall,
-            title="Campus average % by date (all campuses combined)",
-            caption="Combined from each campus AVERAGE PERCENTAGE row.",
-        )
-    else:
-        overall = parsed.get(selected_campus, {}).get("overall", pd.DataFrame())
-        icon = CAMPUS_ICONS.get(selected_campus, "🏫")
-        extra = (
-            " INDUK locations are grouped (e.g. K01–K08, Bakti Permai) before averaging."
-            if selected_campus == "INDUK"
-            else ""
-        )
-        render_activity_average_panel(
-            overall,
-            title=f"{icon} Campus average % by date — {selected_campus}",
-            caption=f"From the sheet AVERAGE PERCENTAGE row.{extra}",
-        )
+    overall = parsed.get(selected_campus, {}).get("overall", pd.DataFrame())
+    icon = CAMPUS_ICONS.get(selected_campus, "🏫")
+    extra = (
+        " INDUK locations are grouped (e.g. K01–K08, Bakti Permai) before averaging."
+        if selected_campus == "INDUK"
+        else ""
+    )
+    render_activity_average_panel(
+        overall,
+        title=f"{icon} Campus average % by date — {selected_campus}",
+        caption=f"From the sheet AVERAGE PERCENTAGE row.{extra}",
+    )
 
 
 def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
