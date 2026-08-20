@@ -60,10 +60,35 @@ def _looks_like_date(value) -> bool:
     return bool(re.match(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$", text))
 
 
+def _detect_header_row_index(df: pd.DataFrame) -> int:
+    """Find the header row that contains at least one Trunking column."""
+    max_scan = min(len(df), 6)
+    for i in range(max_scan):
+        row = df.iloc[i]
+        if any(str(v).strip().replace("\r", "") == "Trunking" for v in row):
+            return i
+    return 1 if len(df) > 1 else 0
+
+
+def _detect_location_progress_cols(header_row: pd.Series) -> tuple[int, int]:
+    """Return (location_col, progress_col), with a safe fallback."""
+    location_col = -1
+    progress_col = -1
+    for i, val in enumerate(header_row):
+        text = str(val).strip().upper().replace("\r", "")
+        if text == "LOCATION":
+            location_col = i
+        elif text == "PROGRESS":
+            progress_col = i
+    if location_col < 0 or progress_col < 0:
+        return 1, 2
+    return location_col, progress_col
+
+
 def _find_date_blocks(header_row: pd.Series) -> list[tuple[int, list[int]]]:
     """
-    Return list of (date_col_index, [activity_col_indices]) for each date block.
-    Each block starts at a 'Trunking' header column; the first block is preceded by 'Date'.
+    Each date block is a 'Trunking' header followed by the 8 activity columns.
+    Dates sit in a column to the left of Trunking (header 'Date' or a cell in data rows).
     """
     blocks: list[tuple[int, list[int]]] = []
     n = len(header_row)
@@ -73,34 +98,43 @@ def _find_date_blocks(header_row: pd.Series) -> list[tuple[int, list[int]]]:
     ]
 
     for ti in trunking_indices:
-        prev = str(header_row.iloc[ti - 1]).strip().lower() if ti > 0 else ""
-        if prev == "date":
-            date_col = ti - 1
-            # PERCENT row: first activity is on the Trunking column (ti), not ti+1
-            act_cols = list(range(ti, ti + len(ACTIVITIES)))
-        else:
-            date_col = ti
-            act_cols = list(range(ti + 2, ti + 2 + len(ACTIVITIES)))
-        act_cols = [c for c in act_cols if c < n]
-        if len(act_cols) == len(ACTIVITIES):
-            blocks.append((date_col, act_cols))
+        act_cols = [c for c in range(ti, ti + len(ACTIVITIES)) if c < n]
+        if len(act_cols) != len(ACTIVITIES):
+            continue
+        prev = str(header_row.iloc[ti - 1]).strip().lower().replace("\r", "") if ti > 0 else ""
+        date_col = ti - 1 if prev == "date" else max(0, ti - 1)
+        blocks.append((date_col, act_cols))
 
     return blocks
 
 
 def _extract_dates_for_blocks(df: pd.DataFrame, blocks: list[tuple[int, list[int]]]) -> list[str]:
-    """Find date labels for each block from DONE rows."""
+    """Find the date label for each block by scanning columns just before Trunking."""
     dates: list[str] = []
-    for date_col, _ in blocks:
+    prev_end = 0
+    for date_col, act_cols in blocks:
+        trunking_col = act_cols[0]
         found = ""
-        for row_idx in range(len(df)):
-            if date_col >= len(df.columns):
+        search_from = max(prev_end, 0)
+        search_to = trunking_col
+        for col in range(search_from, search_to + 1):
+            if col >= len(df.columns):
                 break
-            val = str(df.iloc[row_idx, date_col]).strip()
-            if _looks_like_date(val):
-                found = val
+            for row_idx in range(len(df)):
+                val = str(df.iloc[row_idx, col]).strip()
+                if _looks_like_date(val):
+                    found = val
+                    break
+            if found:
                 break
+        if not found and date_col < len(df.columns):
+            for row_idx in range(len(df)):
+                val = str(df.iloc[row_idx, date_col]).strip()
+                if _looks_like_date(val):
+                    found = val
+                    break
         dates.append(found)
+        prev_end = act_cols[-1] + 1
     return dates
 
 
@@ -113,16 +147,18 @@ def parse_progress_sheet(
     if df.empty or len(df) < 3:
         return [], pd.DataFrame()
 
-    header_row = df.iloc[1]
+    header_idx = _detect_header_row_index(df)
+    header_row = df.iloc[header_idx]
+    location_col, progress_col = _detect_location_progress_cols(header_row)
     blocks = _find_date_blocks(header_row)
     block_dates = _extract_dates_for_blocks(df, blocks)
 
     locations: list[LocationProgress] = []
     skip_labels = {"TOTAL", "PERCENT", "PERCENTAGE", "TOTAL DONE", "OVERALL TOTAL", ""}
 
-    row_idx = 2
+    row_idx = header_idx + 1
     while row_idx < len(df):
-        location = str(df.iloc[row_idx, 1]).strip()
+        location = str(df.iloc[row_idx, location_col]).strip()
         if not location or location in skip_labels:
             row_idx += 1
             continue
@@ -130,11 +166,12 @@ def parse_progress_sheet(
             row_idx += 1
             continue
 
-        percent_row_idx = row_idx + 2
-        if percent_row_idx >= len(df):
-            break
-        percent_label = str(df.iloc[percent_row_idx, 2]).strip().upper()
-        if percent_label != "PERCENT":
+        percent_row_idx = None
+        for look in range(row_idx + 1, min(row_idx + 5, len(df))):
+            if str(df.iloc[look, progress_col]).strip().upper() in {"PERCENT", "PERCENTAGE"}:
+                percent_row_idx = look
+                break
+        if percent_row_idx is None:
             row_idx += 1
             continue
 
@@ -154,10 +191,65 @@ def parse_progress_sheet(
 
         if prog.by_date:
             locations.append(prog)
-        row_idx += 3
+        row_idx = percent_row_idx + 1
 
     overall = _parse_overall_summary(df)
     return locations, overall
+
+
+def available_dates(df: pd.DataFrame) -> list[str]:
+    """Extract all detected date blocks from one campus sheet."""
+    if df is None or df.empty:
+        return []
+    header_idx = _detect_header_row_index(df)
+    header_row = df.iloc[header_idx]
+    blocks = _find_date_blocks(header_row)
+    dates = _extract_dates_for_blocks(df, blocks)
+    clean = [d for d in dates if d]
+    return sorted(list(dict.fromkeys(clean)), key=_parse_date_key)
+
+
+def campus_date_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
+    """
+    Build an Excel-like snapshot (DONE/TOTAL/PERCENTAGE rows) for one campus date.
+    Returns columns: Location, Progress, <activities...>
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    header_idx = _detect_header_row_index(df)
+    header_row = df.iloc[header_idx]
+    location_col, progress_col = _detect_location_progress_cols(header_row)
+    blocks = _find_date_blocks(header_row)
+    block_dates = _extract_dates_for_blocks(df, blocks)
+
+    block_i = next((i for i, d in enumerate(block_dates) if d == date_str), None)
+    if block_i is None:
+        return pd.DataFrame()
+
+    _, act_cols = blocks[block_i]
+    rows: list[dict[str, str]] = []
+    current_location = ""
+
+    for r in range(header_idx + 1, len(df)):
+        progress = str(df.iloc[r, progress_col]).strip().upper()
+        if progress not in {"DONE", "TOTAL", "PERCENT", "PERCENTAGE"}:
+            continue
+
+        loc_val = str(df.iloc[r, location_col]).strip()
+        if progress == "DONE":
+            current_location = loc_val
+
+        row_data: dict[str, str] = {
+            "Location": current_location if progress == "DONE" else "",
+            "Progress": "PERCENTAGE" if progress == "PERCENT" else progress,
+        }
+        for act_name, col_idx in zip(ACTIVITIES, act_cols):
+            val = str(df.iloc[r, col_idx]).strip() if col_idx < len(df.columns) else ""
+            row_data[act_name] = val
+        rows.append(row_data)
+
+    return pd.DataFrame(rows)
 
 
 def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:

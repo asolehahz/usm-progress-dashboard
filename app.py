@@ -15,6 +15,8 @@ from config import ACTIVITIES, CAMPUS_ICONS, SHEET_ID, campus_sheet_names
 from lib.auth import admin_login_form
 from lib.data_parser import (
     aggregate_overall_by_date,
+    available_dates,
+    campus_date_snapshot,
     campus_sheets_summary,
     locations_activity_timeseries,
     parse_progress_sheet,
@@ -162,7 +164,7 @@ def load_data() -> dict[str, dict]:
     parsed: dict[str, dict] = {}
     for sheet_name, df in tabs.items():
         locations, overall = parse_progress_sheet(df, sheet_name=sheet_name)
-        parsed[sheet_name] = {"locations": locations, "overall": overall}
+        parsed[sheet_name] = {"locations": locations, "overall": overall, "raw_df": df}
     return parsed
 
 
@@ -196,8 +198,8 @@ def render_dashboard(parsed: dict[str, dict]):
     if not overall.empty:
         st.subheader("All Campuses — Combined Progress Trend")
         latest = overall.iloc[-1]
-        metric_cols = st.columns(min(4, len(ACTIVITIES)))
-        for i, act in enumerate(ACTIVITIES[:4]):
+        metric_cols = st.columns(len(ACTIVITIES))
+        for i, act in enumerate(ACTIVITIES):
             val = latest.get(act)
             metric_cols[i].metric(act, f"{val:.1f}%" if val is not None else "—")
 
@@ -234,11 +236,12 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
     if campus not in campus_names:
         campus = st.session_state.get("selected_campus", campus_names[0])
     st.session_state["selected_campus"] = campus
-    st.header(f"Campus Detail — {campus}")
+    st.header(f"Check Daily Data — {campus}")
 
     data = parsed.get(campus, {})
     locations = data.get("locations", [])
     overall = data.get("overall")
+    raw_df = data.get("raw_df")
 
     if not locations:
         st.info(f"No progress data in the **{campus}** sheet yet.")
@@ -252,6 +255,20 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
     c1.metric(f"{icon} Campus", campus)
     c2.metric("Overall progress", f"{avg:.1f}%")
     c3.metric("Locations tracked", len(locations))
+
+    daily_dates = available_dates(raw_df)
+    if daily_dates:
+        selected_date = st.selectbox(
+            "Select date to view Excel-style data",
+            options=daily_dates[::-1],
+            key=f"daily_date_{campus}",
+        )
+        snapshot = campus_date_snapshot(raw_df, selected_date)
+        st.subheader(f"Sheet rows for {selected_date}")
+        if snapshot.empty:
+            st.info("No DONE/TOTAL/PERCENTAGE rows found for this date block.")
+        else:
+            st.dataframe(snapshot, use_container_width=True, hide_index=True)
 
     fig = px.line(
         ts,
@@ -428,30 +445,6 @@ def render_history():
                     )
 
 
-def render_data_source_help():
-    """Explain how sheet data is parsed — for verifying against Google Sheets."""
-    with st.expander("How this app reads your Google Sheet"):
-        st.markdown(
-            """
-            **Source:** Each campus tab is exported as CSV from Google Sheets every 5 minutes.
-
-            **Per location** (e.g. *Desasiswa Aman Damai K01*):
-            1. Find the location name in **column B**
-            2. Read the **PERCENT** row (3 rows below the location)
-            3. For each **date block** across the sheet, read 8 activities:
-               Trunking, Lay Cable, Termination, UTP Point, AP Mounting,
-               Slab Coring, Rack Installation, Fiber Optic
-
-            **Campus overall %:** average of the latest summary row at the bottom of the sheet,
-            or average across all locations if that row is missing.
-
-            **Charts:** average of all location PERCENT values for each date.
-
-            If numbers look wrong, compare with the **PERCENT** row for a location on the same date in your sheet.
-            """
-        )
-
-
 def _load_or_fail() -> dict[str, dict]:
     try:
         return load_data()
@@ -466,21 +459,18 @@ def _load_or_fail() -> dict[str, dict]:
 
 def page_dashboard():
     render_dashboard(_load_or_fail())
-    render_data_source_help()
 
 
 def page_campus(campus: str):
     def _run():
         st.session_state["selected_campus"] = campus
         render_campus_detail(_load_or_fail(), campus=campus)
-        render_data_source_help()
 
     return _run
 
 
 def page_overall():
     render_overall_data(_load_or_fail())
-    render_data_source_help()
 
 
 def page_history():
@@ -509,7 +499,7 @@ def main():
             "Overview": [
                 st.Page(page_dashboard, title="Dashboard", icon="📊", default=True),
             ],
-            "Campus Detail": [
+            "Check Daily Data": [
                 st.Page(
                     page_campus(name),
                     title=name,
