@@ -29,17 +29,18 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Brand colors: purple #4B2876, orange #F7941D, white #FFFFFF
+# Distinct hues so activity lines stay easy to tell apart
 CHART_COLORS = [
-    "#4B2876",
-    "#F7941D",
-    "#7B4BA8",
-    "#FFB347",
-    "#2D1B4E",
-    "#E67E22",
-    "#9B59B6",
-    "#F39C12",
+    "#4B2876",  # purple
+    "#F7941D",  # orange
+    "#0077B6",  # blue
+    "#2A9D8F",  # teal
+    "#E63946",  # red
+    "#6A994E",  # green
+    "#C77DFF",  # violet
+    "#BC6C25",  # brown
 ]
+ACTIVITY_COLORS = {name: CHART_COLORS[i] for i, name in enumerate(ACTIVITIES)}
 
 st.markdown(
     """
@@ -209,7 +210,7 @@ def render_dashboard(parsed: dict[str, dict]):
                         y=overall[act],
                         mode="lines+markers",
                         name=act,
-                        line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
+                        line=dict(color=ACTIVITY_COLORS.get(act, CHART_COLORS[i % len(CHART_COLORS)]), width=2),
                         marker=dict(size=6),
                     )
                 )
@@ -259,7 +260,7 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
         color="Activity",
         markers=True,
         title=f"{campus} — Activity progress by date",
-        color_discrete_sequence=CHART_COLORS,
+        color_discrete_map=ACTIVITY_COLORS,
     )
     fig.update_layout(
         height=480,
