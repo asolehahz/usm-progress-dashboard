@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from config import ACTIVITIES, CAMPUS_ICONS, campus_sheet_names
+from config import ACTIVITIES, CAMPUS_ICONS, INDUK_LOCATION_GROUPS, campus_sheet_names
 
 
 @dataclass
@@ -193,7 +193,7 @@ def parse_progress_sheet(
             locations.append(prog)
         row_idx = percent_row_idx + 1
 
-    overall = _parse_overall_summary(df)
+    overall = get_campus_overall(df, sheet_name) if sheet_name else _parse_overall_summary(df)
     return locations, overall
 
 
@@ -209,6 +209,274 @@ def available_dates(df: pd.DataFrame) -> list[str]:
     return sorted(list(dict.fromkeys(clean)), key=_parse_date_key)
 
 
+def _parse_number(value) -> float | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _induk_group_name(location: str) -> str | None:
+    """Map an INDUK location label to one of the seven grouped names."""
+    loc = location.strip()
+    if not loc:
+        return None
+    normalized = re.sub(r"\s+", " ", loc).strip()
+    upper = normalized.upper()
+    for group_name, pattern in INDUK_LOCATION_GROUPS:
+        if pattern.startswith("^"):
+            short = re.sub(r"^DS\s+", "", upper).strip()
+            if re.search(pattern, short, re.IGNORECASE):
+                return group_name
+        elif re.search(pattern, upper, re.IGNORECASE):
+            return group_name
+    return None
+
+
+def _iter_location_blocks(
+    df: pd.DataFrame,
+    header_idx: int,
+    location_col: int,
+    progress_col: int,
+) -> list[tuple[str, int, int, int]]:
+    """Return (location_name, done_row, total_row, percent_row) for each site block."""
+    skip_labels = {
+        "TOTAL",
+        "PERCENT",
+        "PERCENTAGE",
+        "TOTAL DONE",
+        "OVERALL TOTAL",
+        "AVERAGE PERCENTAGE",
+        "AVERAGE PERCENT",
+        "DONE",
+        "PROGRESS",
+        "",
+    }
+    blocks: list[tuple[str, int, int, int]] = []
+    row_idx = header_idx + 1
+    while row_idx < len(df):
+        location = str(df.iloc[row_idx, location_col]).strip()
+        progress = str(df.iloc[row_idx, progress_col]).strip().upper()
+        if not location or location.upper() in skip_labels:
+            row_idx += 1
+            continue
+        if progress != "DONE":
+            row_idx += 1
+            continue
+
+        total_row = percent_row = None
+        for look in range(row_idx + 1, min(row_idx + 5, len(df))):
+            label = str(df.iloc[look, progress_col]).strip().upper()
+            if label == "TOTAL":
+                total_row = look
+            elif label in {"PERCENT", "PERCENTAGE"}:
+                percent_row = look
+                break
+        if total_row is None or percent_row is None:
+            row_idx += 1
+            continue
+        blocks.append((location, row_idx, total_row, percent_row))
+        row_idx = percent_row + 1
+    return blocks
+
+
+def _activity_values_from_row(row: pd.Series, act_cols: list[int]) -> dict[str, float | None]:
+    values: dict[str, float | None] = {}
+    for act_name, col_idx in zip(ACTIVITIES, act_cols):
+        values[act_name] = _parse_number(row.iloc[col_idx]) if col_idx < len(row) else None
+    return values
+
+
+def _average_percent_from_totals(
+    total_done: dict[str, float | None],
+    overall_total: dict[str, float | None],
+    trunking_percentages: list[float],
+) -> dict[str, float | None]:
+    """Trunking = average of location %; other activities = total done / overall total."""
+    result: dict[str, float | None] = {}
+    if trunking_percentages:
+        result["Trunking"] = round(sum(trunking_percentages) / len(trunking_percentages), 2)
+    else:
+        done = total_done.get("Trunking")
+        total = overall_total.get("Trunking")
+        result["Trunking"] = round(done / total * 100, 2) if done is not None and total else None
+
+    for act in ACTIVITIES[1:]:
+        done = total_done.get(act)
+        total = overall_total.get(act)
+        if done is None or total is None or total == 0:
+            result[act] = None
+        else:
+            result[act] = round(done / total * 100, 2)
+    return result
+
+
+def _compute_induk_overall_by_date(df: pd.DataFrame) -> pd.DataFrame:
+    """INDUK summary per date block using grouped DONE/TOTAL rollups."""
+    header_idx = _detect_header_row_index(df)
+    header_row = df.iloc[header_idx]
+    location_col, progress_col = _detect_location_progress_cols(header_row)
+    blocks = _find_date_blocks(header_row)
+    block_dates = _extract_dates_for_blocks(df, blocks)
+    location_blocks = _iter_location_blocks(df, header_idx, location_col, progress_col)
+
+    records: list[dict] = []
+    for block_i, (date_label, (_, act_cols)) in enumerate(zip(block_dates, blocks)):
+        if not date_label:
+            continue
+
+        grouped_done: dict[str, dict[str, float]] = {}
+        grouped_total: dict[str, dict[str, float]] = {}
+        trunking_pcts: list[float] = []
+
+        for location, done_row, total_row, percent_row in location_blocks:
+            group = _induk_group_name(location)
+            if not group:
+                continue
+            done_vals = _activity_values_from_row(df.iloc[done_row], act_cols)
+            total_vals = _activity_values_from_row(df.iloc[total_row], act_cols)
+            pct_vals = _activity_values_from_row(df.iloc[percent_row], act_cols)
+
+            trunk_pct = _parse_percent(df.iloc[percent_row, act_cols[0]])
+            if trunk_pct is not None:
+                trunking_pcts.append(trunk_pct)
+
+            for act in ACTIVITIES:
+                done_num = done_vals.get(act)
+                total_num = total_vals.get(act)
+                if done_num is not None:
+                    grouped_done.setdefault(group, {}).setdefault(act, 0.0)
+                    grouped_done[group][act] += done_num
+                if total_num is not None:
+                    grouped_total.setdefault(group, {}).setdefault(act, 0.0)
+                    grouped_total[group][act] += total_num
+
+        campus_done: dict[str, float | None] = {act: 0.0 for act in ACTIVITIES}
+        campus_total: dict[str, float | None] = {act: 0.0 for act in ACTIVITIES}
+        for act in ACTIVITIES:
+            done_sum = sum(group_vals.get(act, 0.0) for group_vals in grouped_done.values())
+            total_sum = sum(group_vals.get(act, 0.0) for group_vals in grouped_total.values())
+            campus_done[act] = done_sum if done_sum else None
+            campus_total[act] = total_sum if total_sum else None
+
+        record = {"Date": date_label}
+        averages = _average_percent_from_totals(campus_done, campus_total, trunking_pcts)
+        record.update(averages)
+        if any(record.get(a) is not None for a in ACTIVITIES):
+            records.append(record)
+
+    if not records:
+        return pd.DataFrame()
+
+    result = pd.DataFrame(records).drop_duplicates(subset=["Date"], keep="last")
+    result["_sort"] = result["Date"].map(_parse_date_key)
+    return result.sort_values("_sort").drop(columns=["_sort"]).reset_index(drop=True)
+
+
+def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
+    """Excel-like INDUK table with grouped locations for one date block."""
+    header_idx = _detect_header_row_index(df)
+    header_row = df.iloc[header_idx]
+    location_col, progress_col = _detect_location_progress_cols(header_row)
+    blocks = _find_date_blocks(header_row)
+    block_dates = _extract_dates_for_blocks(df, blocks)
+    block_i = next((i for i, d in enumerate(block_dates) if d == date_str), None)
+    if block_i is None:
+        return pd.DataFrame()
+
+    _, act_cols = blocks[block_i]
+    location_blocks = _iter_location_blocks(df, header_idx, location_col, progress_col)
+
+    grouped_done: dict[str, dict[str, float]] = {}
+    grouped_total: dict[str, dict[str, float]] = {}
+    grouped_trunk_pcts: dict[str, list[float]] = {}
+
+    for location, done_row, total_row, percent_row in location_blocks:
+        group = _induk_group_name(location)
+        if not group:
+            continue
+        done_vals = _activity_values_from_row(df.iloc[done_row], act_cols)
+        total_vals = _activity_values_from_row(df.iloc[total_row], act_cols)
+        trunk_pct = _parse_percent(df.iloc[percent_row, act_cols[0]])
+        if trunk_pct is not None:
+            grouped_trunk_pcts.setdefault(group, []).append(trunk_pct)
+
+        for act in ACTIVITIES:
+            done_num = done_vals.get(act)
+            total_num = total_vals.get(act)
+            if done_num is not None:
+                grouped_done.setdefault(group, {}).setdefault(act, 0.0)
+                grouped_done[group][act] += done_num
+            if total_num is not None:
+                grouped_total.setdefault(group, {}).setdefault(act, 0.0)
+                grouped_total[group][act] += total_num
+
+    rows: list[dict[str, str]] = []
+    for group_name, _ in INDUK_LOCATION_GROUPS:
+        done_map = grouped_done.get(group_name, {})
+        total_map = grouped_total.get(group_name, {})
+        if not done_map and not total_map:
+            continue
+
+        done_row = {"Location": group_name, "Progress": "DONE"}
+        total_row = {"Location": "", "Progress": "TOTAL"}
+        pct_row = {"Location": "", "Progress": "PERCENTAGE"}
+
+        trunk_pcts = grouped_trunk_pcts.get(group_name, [])
+        averages = _average_percent_from_totals(
+            {act: done_map.get(act) for act in ACTIVITIES},
+            {act: total_map.get(act) for act in ACTIVITIES},
+            trunk_pcts,
+        )
+
+        for act in ACTIVITIES:
+            done_row[act] = _cell_display(done_map.get(act))
+            total_row[act] = _cell_display(total_map.get(act))
+            pct_val = averages.get(act)
+            pct_row[act] = f"{pct_val:.2f}%" if pct_val is not None else "N/A"
+
+        rows.extend([done_row, total_row, pct_row])
+
+    campus_done = {
+        act: sum(group_vals.get(act, 0.0) for group_vals in grouped_done.values()) or None
+        for act in ACTIVITIES
+    }
+    campus_total = {
+        act: sum(group_vals.get(act, 0.0) for group_vals in grouped_total.values()) or None
+        for act in ACTIVITIES
+    }
+    all_trunk = [p for values in grouped_trunk_pcts.values() for p in values]
+    campus_avg = _average_percent_from_totals(campus_done, campus_total, all_trunk)
+
+    for label, values in [
+        ("TOTAL DONE", campus_done),
+        ("OVERALL TOTAL", campus_total),
+        ("AVERAGE PERCENTAGE", campus_avg),
+    ]:
+        row = {"Location": label, "Progress": ""}
+        for act in ACTIVITIES:
+            val = values.get(act)
+            if label == "AVERAGE PERCENTAGE":
+                row[act] = f"{val:.2f}%" if val is not None else "N/A"
+            else:
+                row[act] = _cell_display(val)
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def get_campus_overall(df: pd.DataFrame, campus: str) -> pd.DataFrame:
+    """Campus AVERAGE PERCENTAGE series; INDUK uses grouped DONE/TOTAL logic."""
+    if campus == "INDUK":
+        return _compute_induk_overall_by_date(df)
+    return _parse_overall_summary(df)
+
+
 def _cell_display(value) -> str:
     """Blank cells are treated as not available / not applicable."""
     text = "" if value is None else str(value).strip()
@@ -221,14 +489,15 @@ def _row_label(df: pd.DataFrame, row_idx: int, location_col: int, progress_col: 
     return loc or prog
 
 
-def campus_date_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
+def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> pd.DataFrame:
     """
     Excel-like snapshot for one campus date block.
 
-    Includes location DONE / TOTAL / PERCENTAGE rows, plus bottom summary rows:
-    TOTAL DONE, OVERALL TOTAL, AVERAGE PERCENTAGE.
-    Empty cells are shown as N/A (not available / not applicable).
+    INDUK uses grouped locations. Other campuses show raw sheet rows.
     """
+    if campus == "INDUK":
+        return _induk_grouped_snapshot(df, date_str)
+
     if df is None or df.empty:
         return pd.DataFrame()
 
@@ -285,6 +554,7 @@ __all__ = [
     "LocationProgress",
     "available_dates",
     "campus_date_snapshot",
+    "get_campus_overall",
     "parse_progress_sheet",
     "sheet_overall_percent",
     "campus_sheets_summary",
@@ -368,7 +638,7 @@ def campus_sheets_summary(parsed: dict[str, dict]) -> dict[str, dict]:
         summary[name] = {
             "icon": CAMPUS_ICONS.get(name, "🏫"),
             "overall": sheet_overall_percent(locations, overall),
-            "count": len(locations),
+            "count": len(INDUK_LOCATION_GROUPS) if name == "INDUK" else len(locations),
         }
     return summary
 

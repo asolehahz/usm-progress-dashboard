@@ -11,13 +11,14 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from config import ACTIVITIES, CAMPUS_ICONS, SHEET_ID, campus_sheet_names
+from config import ACTIVITIES, CAMPUS_ICONS, INDUK_LOCATION_GROUPS, SHEET_ID, campus_sheet_names
 from lib.auth import admin_login_form
 from lib.data_parser import (
     aggregate_overall_by_date,
     available_dates,
     campus_date_snapshot,
     campus_sheets_summary,
+    get_campus_overall,
     parse_progress_sheet,
     sheet_overall_percent,
 )
@@ -162,16 +163,64 @@ def load_data() -> dict[str, dict]:
     tabs = fetch_all_tabs()
     parsed: dict[str, dict] = {}
     for sheet_name, df in tabs.items():
-        locations, overall = parse_progress_sheet(df, sheet_name=sheet_name)
+        locations, _ = parse_progress_sheet(df, sheet_name=sheet_name)
+        overall = get_campus_overall(df, sheet_name)
         parsed[sheet_name] = {"locations": locations, "overall": overall, "raw_df": df}
     return parsed
+
+
+def render_activity_average_panel(overall: pd.DataFrame, title: str, caption: str = ""):
+    """Metric boxes + multi-line chart from AVERAGE PERCENTAGE data."""
+    if overall is None or overall.empty:
+        st.warning("No average percentage data found for this selection.")
+        return
+
+    latest = overall.iloc[-1]
+    st.subheader(title)
+    if caption:
+        st.caption(caption)
+    st.caption(f"Latest summary date: **{latest.get('Date', '—')}**")
+
+    metric_cols = st.columns(4)
+    for i, act in enumerate(ACTIVITIES):
+        val = latest.get(act)
+        display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
+        metric_cols[i % 4].metric(act, display)
+
+    fig = go.Figure()
+    for i, act in enumerate(ACTIVITIES):
+        if act in overall.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=overall["Date"],
+                    y=overall[act],
+                    mode="lines+markers",
+                    name=act,
+                    line=dict(color=ACTIVITY_COLORS.get(act, CHART_COLORS[i % len(CHART_COLORS)]), width=2),
+                    marker=dict(size=6),
+                    connectgaps=False,
+                )
+            )
+    fig.update_layout(
+        height=420,
+        xaxis_title="Date",
+        yaxis_title="Progress (%)",
+        yaxis_range=[0, 105],
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        margin=dict(l=40, r=20, t=40, b=40),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FAFAFA",
+        font=dict(color="#4B2876"),
+        colorway=CHART_COLORS,
+    )
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_dashboard(parsed: dict[str, dict]):
     st.header("Campus Overview")
     st.caption(
-        "Current averages come from each campus sheet **AVERAGE PERCENTAGE** row. "
-        "Blank activity cells in the sheet mean not available / not applicable."
+        "Choose a campus below to view current average percentages and daily trends. "
+        "INDUK groups related locations before calculating averages."
     )
 
     summary = campus_sheets_summary(parsed)
@@ -193,50 +242,32 @@ def render_dashboard(parsed: dict[str, dict]):
                 st.session_state["selected_campus"] = campus
                 st.switch_page(campus.lower().replace(" ", "-"))
 
-    overall = aggregate_overall_by_date(parsed)
-    if not overall.empty:
-        st.subheader("Current average percentage (all campuses)")
-        latest = overall.iloc[-1]
-        st.caption(f"Latest summary date: **{latest.get('Date', '—')}**")
-        metric_cols = st.columns(4)
-        for i, act in enumerate(ACTIVITIES):
-            val = latest.get(act)
-            display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
-            metric_cols[i % 4].metric(act, display)
+    campus_options = ["All campuses (combined)"] + campus_sheet_names()
+    selected_campus = st.selectbox(
+        "Select campus to view average percentage",
+        options=campus_options,
+        key="dashboard_campus_select",
+    )
 
-        st.subheader("Daily average percentage trend")
-        st.caption("One line per activity, combined from campus AVERAGE PERCENTAGE rows.")
-        fig = go.Figure()
-        for i, act in enumerate(ACTIVITIES):
-            if act in overall.columns:
-                fig.add_trace(
-                    go.Scatter(
-                        x=overall["Date"],
-                        y=overall[act],
-                        mode="lines+markers",
-                        name=act,
-                        line=dict(color=ACTIVITY_COLORS.get(act, CHART_COLORS[i % len(CHART_COLORS)]), width=2),
-                        marker=dict(size=6),
-                        connectgaps=False,
-                    )
-                )
-        fig.update_layout(
-            height=420,
-            xaxis_title="Date",
-            yaxis_title="Progress (%)",
-            yaxis_range=[0, 105],
-            legend=dict(orientation="h", yanchor="bottom", y=1.02),
-            margin=dict(l=40, r=20, t=40, b=40),
-            paper_bgcolor="#FFFFFF",
-            plot_bgcolor="#FAFAFA",
-            font=dict(color="#4B2876"),
-            colorway=CHART_COLORS,
+    if selected_campus == "All campuses (combined)":
+        overall = aggregate_overall_by_date(parsed)
+        render_activity_average_panel(
+            overall,
+            title="Campus average % by date (all campuses combined)",
+            caption="Combined from each campus AVERAGE PERCENTAGE row.",
         )
-        st.plotly_chart(fig, width="stretch")
     else:
-        st.warning(
-            "No AVERAGE PERCENTAGE summary rows found yet. "
-            "Make sure each campus tab has TOTAL DONE / OVERALL TOTAL / AVERAGE PERCENTAGE at the bottom."
+        overall = parsed.get(selected_campus, {}).get("overall", pd.DataFrame())
+        icon = CAMPUS_ICONS.get(selected_campus, "🏫")
+        extra = (
+            " INDUK locations are grouped (e.g. K01–K08, Bakti Permai) before averaging."
+            if selected_campus == "INDUK"
+            else ""
+        )
+        render_activity_average_panel(
+            overall,
+            title=f"{icon} Campus average % by date — {selected_campus}",
+            caption=f"From the sheet AVERAGE PERCENTAGE row.{extra}",
         )
 
 
@@ -249,6 +280,11 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
     st.caption(
         "Excel-style view for one date: DONE, TOTAL, PERCENTAGE, plus TOTAL DONE / "
         "OVERALL TOTAL / AVERAGE PERCENTAGE. Empty cells show as N/A."
+        + (
+            " INDUK locations are grouped before totals and percentages are calculated."
+            if campus == "INDUK"
+            else ""
+        )
     )
 
     data = parsed.get(campus, {})
@@ -261,12 +297,14 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
         return
 
     icon = CAMPUS_ICONS.get(campus, "🏫")
-    avg = sheet_overall_percent(locations, overall if overall is not None else pd.DataFrame())
+    overall_df = overall if overall is not None else pd.DataFrame()
+    avg = sheet_overall_percent(locations, overall_df)
+    loc_count = len(INDUK_LOCATION_GROUPS) if campus == "INDUK" else len(locations)
 
     c1, c2, c3 = st.columns(3)
     c1.metric(f"{icon} Campus", campus)
     c2.metric("Latest average %", f"{avg:.1f}%")
-    c3.metric("Locations tracked", len(locations))
+    c3.metric("Locations tracked", loc_count)
 
     daily_dates = available_dates(raw_df)
     if not daily_dates:
@@ -278,45 +316,12 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
         options=daily_dates[::-1],
         key=f"daily_date_{campus}",
     )
-    snapshot = campus_date_snapshot(raw_df, selected_date)
+    snapshot = campus_date_snapshot(raw_df, selected_date, campus=campus)
     st.subheader(f"Sheet data for {selected_date}")
     if snapshot.empty:
         st.info("No DONE/TOTAL/PERCENTAGE rows found for this date.")
     else:
         st.dataframe(snapshot, width="stretch", hide_index=True)
-
-    if overall is not None and not overall.empty:
-        st.subheader("Campus average % by date (from AVERAGE PERCENTAGE)")
-        metric_cols = st.columns(4)
-        latest = overall.iloc[-1]
-        for i, act in enumerate(ACTIVITIES):
-            val = latest.get(act)
-            display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
-            metric_cols[i % 4].metric(act, display)
-
-        fig = go.Figure()
-        for i, act in enumerate(ACTIVITIES):
-            if act in overall.columns:
-                fig.add_trace(
-                    go.Scatter(
-                        x=overall["Date"],
-                        y=overall[act],
-                        mode="lines+markers",
-                        name=act,
-                        line=dict(color=ACTIVITY_COLORS.get(act, CHART_COLORS[i % len(CHART_COLORS)]), width=2),
-                        marker=dict(size=6),
-                        connectgaps=False,
-                    )
-                )
-        fig.update_layout(
-            height=420,
-            yaxis_range=[0, 105],
-            legend=dict(orientation="h", y=1.1),
-            paper_bgcolor="#FFFFFF",
-            plot_bgcolor="#FAFAFA",
-            font=dict(color="#4B2876"),
-        )
-        st.plotly_chart(fig, width="stretch")
 
 
 def render_overall_data(parsed: dict[str, dict]):
