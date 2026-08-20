@@ -11,7 +11,7 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 
-from config import ACTIVITIES, CAMPUS_ICONS, SHEET_ID, SHEET_TABS, campus_sheet_names
+from config import ACTIVITIES, CAMPUS_ICONS, SHEET_ID, campus_sheet_names
 from lib.auth import admin_login_form
 from lib.data_parser import (
     aggregate_overall_by_date,
@@ -77,14 +77,14 @@ st.markdown(
         color: #FFD699 !important;
         font-weight: 600;
     }
-    [data-testid="stSidebar"] [data-testid="stRadio"] label {
-        background: rgba(255,255,255,0.08);
-        border-radius: 8px;
-        padding: 0.35rem 0.5rem;
-        margin-bottom: 0.25rem;
+    [data-testid="stSidebarNav"] a {
+        color: #FFFFFF !important;
     }
-    [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
-        background: rgba(247,148,29,0.35);
+    [data-testid="stSidebarNav"] a:hover {
+        background: rgba(247,148,29,0.35) !important;
+    }
+    [data-testid="stSidebarNav"] span {
+        color: #FFFFFF !important;
     }
     [data-testid="stSidebar"] button {
         background: #F7941D !important;
@@ -189,8 +189,7 @@ def render_dashboard(parsed: dict[str, dict]):
             )
             if st.button("View campus details →", key=f"campus_btn_{campus}", use_container_width=True):
                 st.session_state["selected_campus"] = campus
-                st.session_state["page"] = "Campus Detail"
-                st.rerun()
+                st.switch_page(campus.lower().replace(" ", "-"))
 
     overall = aggregate_overall_by_date(parsed)
     if not overall.empty:
@@ -229,15 +228,12 @@ def render_dashboard(parsed: dict[str, dict]):
         st.plotly_chart(fig, use_container_width=True)
 
 
-def render_campus_detail(parsed: dict[str, dict]):
-    st.header("Campus Detail")
+def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
     campus_names = campus_sheet_names()
-    default_idx = 0
-    if "selected_campus" in st.session_state and st.session_state["selected_campus"] in campus_names:
-        default_idx = campus_names.index(st.session_state["selected_campus"])
-
-    campus = st.selectbox("Select campus (sheet tab)", campus_names, index=default_idx)
+    if campus not in campus_names:
+        campus = st.session_state.get("selected_campus", campus_names[0])
     st.session_state["selected_campus"] = campus
+    st.header(f"Campus Detail — {campus}")
 
     data = parsed.get(campus, {})
     locations = data.get("locations", [])
@@ -455,6 +451,41 @@ def render_data_source_help():
         )
 
 
+def _load_or_fail() -> dict[str, dict]:
+    try:
+        return load_data()
+    except Exception as exc:
+        st.error(
+            "Could not load Google Sheet. Make sure the sheet is shared as "
+            "**Anyone with the link → Viewer**."
+        )
+        st.exception(exc)
+        st.stop()
+
+
+def page_dashboard():
+    render_dashboard(_load_or_fail())
+    render_data_source_help()
+
+
+def page_campus(campus: str):
+    def _run():
+        st.session_state["selected_campus"] = campus
+        render_campus_detail(_load_or_fail(), campus=campus)
+        render_data_source_help()
+
+    return _run
+
+
+def page_overall():
+    render_overall_data(_load_or_fail())
+    render_data_source_help()
+
+
+def page_history():
+    render_history()
+
+
 def main():
     st.sidebar.markdown(
         """
@@ -467,44 +498,33 @@ def main():
     )
     st.sidebar.markdown(f"[Open Google Sheet ↗](https://docs.google.com/spreadsheets/d/{SHEET_ID})")
 
-    with st.sidebar.expander("Sheet tabs loaded"):
-        for name in SHEET_TABS:
-            st.write(f"• {name}")
-
-    pages = ["Dashboard", "Campus Detail", "Overall Data", "Daily History"]
-
-    if "page" not in st.session_state:
-        st.session_state["page"] = "Dashboard"
-
-    choice = st.sidebar.radio("Navigate", pages, index=pages.index(st.session_state["page"]))
-    st.session_state["page"] = choice
-
     if st.sidebar.button("Refresh data"):
         load_data.clear()
         fetch_history.clear()
         st.rerun()
 
-    try:
-        parsed = load_data()
-    except Exception as exc:
-        st.error(
-            "Could not load Google Sheet. Make sure the sheet is shared as "
-            "**Anyone with the link → Viewer**."
-        )
-        st.exception(exc)
-        st.stop()
-
-    if choice == "Dashboard":
-        render_dashboard(parsed)
-        render_data_source_help()
-    elif choice == "Campus Detail":
-        render_campus_detail(parsed)
-        render_data_source_help()
-    elif choice == "Overall Data":
-        render_overall_data(parsed)
-        render_data_source_help()
-    elif choice == "Daily History":
-        render_history()
+    nav = st.navigation(
+        {
+            "Overview": [
+                st.Page(page_dashboard, title="Dashboard", icon="📊", default=True),
+            ],
+            "Campus Detail": [
+                st.Page(
+                    page_campus(name),
+                    title=name,
+                    icon=CAMPUS_ICONS.get(name, "🏫"),
+                    url_path=name.lower().replace(" ", "-"),
+                )
+                for name in campus_sheet_names()
+            ],
+            "More": [
+                st.Page(page_overall, title="Overall Data", icon="📈"),
+                st.Page(page_history, title="Daily History", icon="🗂️"),
+            ],
+        },
+        position="sidebar",
+    )
+    nav.run()
 
 
 if __name__ == "__main__":
