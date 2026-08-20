@@ -29,6 +29,43 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Brand colors: purple #4B2876, orange #F7941D, white #FFFFFF
+CHART_COLORS = [
+    "#4B2876",
+    "#F7941D",
+    "#7B4BA8",
+    "#FFB347",
+    "#2D1B4E",
+    "#E67E22",
+    "#9B59B6",
+    "#F39C12",
+]
+
+st.markdown(
+    """
+    <style>
+    .stApp { background-color: #FFFFFF; }
+    [data-testid="stSidebar"] {
+        background-color: #F8F4FC;
+        border-right: 1px solid #E8DFF5;
+    }
+    h1, h2, h3 { color: #4B2876 !important; }
+    [data-testid="stMetricValue"] { color: #4B2876 !important; }
+    [data-testid="stMetricDelta"] svg { stroke: #F7941D !important; }
+    div[data-testid="stButton"] button[kind="primary"],
+    div[data-testid="stButton"] button {
+        border-color: #4B2876;
+    }
+    div[data-testid="stButton"] button:hover {
+        border-color: #F7941D;
+        color: #4B2876;
+    }
+    [data-testid="stExpander"] summary { color: #4B2876; font-weight: 600; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 @st.cache_data(ttl=300, show_spinner="Loading data from Google Sheets…")
 def load_data() -> dict[str, dict]:
@@ -71,7 +108,7 @@ def render_dashboard(parsed: dict[str, dict]):
             metric_cols[i].metric(act, f"{val:.1f}%" if val is not None else "—")
 
         fig = go.Figure()
-        for act in ACTIVITIES:
+        for i, act in enumerate(ACTIVITIES):
             if act in overall.columns:
                 fig.add_trace(
                     go.Scatter(
@@ -79,6 +116,8 @@ def render_dashboard(parsed: dict[str, dict]):
                         y=overall[act],
                         mode="lines+markers",
                         name=act,
+                        line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
+                        marker=dict(size=6),
                     )
                 )
         fig.update_layout(
@@ -88,6 +127,10 @@ def render_dashboard(parsed: dict[str, dict]):
             yaxis_range=[0, 105],
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
             margin=dict(l=40, r=20, t=40, b=40),
+            paper_bgcolor="#FFFFFF",
+            plot_bgcolor="#FAFAFA",
+            font=dict(color="#4B2876"),
+            colorway=CHART_COLORS,
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -126,8 +169,16 @@ def render_campus_detail(parsed: dict[str, dict]):
         color="Activity",
         markers=True,
         title=f"{campus} — Activity progress by date",
+        color_discrete_sequence=CHART_COLORS,
     )
-    fig.update_layout(height=480, yaxis_range=[0, 105], legend=dict(orientation="h", y=1.1))
+    fig.update_layout(
+        height=480,
+        yaxis_range=[0, 105],
+        legend=dict(orientation="h", y=1.1),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FAFAFA",
+        font=dict(color="#4B2876"),
+    )
     st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("Location breakdown (latest)"):
