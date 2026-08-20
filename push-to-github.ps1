@@ -1,5 +1,9 @@
 # Push USM Streamlit app to a new public GitHub repo (Streamlit-only, no Django).
-# Run in PowerShell from this folder:  .\push-to-github.ps1
+#
+# EASIEST on Windows: double-click push-to-github.cmd  (avoids PowerShell script policy)
+#
+# Or in PowerShell:
+#   powershell -ExecutionPolicy Bypass -File .\push-to-github.ps1
 
 $ErrorActionPreference = "Stop"
 $git = "C:\Program Files\Git\bin\git.exe"
