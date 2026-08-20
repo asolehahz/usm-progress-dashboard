@@ -45,21 +45,108 @@ st.markdown(
     """
     <style>
     .stApp { background-color: #FFFFFF; }
+
+    /* Sidebar */
     [data-testid="stSidebar"] {
-        background-color: #F8F4FC;
-        border-right: 1px solid #E8DFF5;
+        background: linear-gradient(180deg, #4B2876 0%, #3A1F5C 100%);
+        border-right: none;
     }
+    [data-testid="stSidebar"] * {
+        color: #FFFFFF !important;
+    }
+    [data-testid="stSidebar"] .sidebar-brand {
+        background: #F7941D;
+        color: #FFFFFF !important;
+        padding: 1rem 1.1rem;
+        border-radius: 10px;
+        margin-bottom: 1rem;
+        text-align: center;
+    }
+    [data-testid="stSidebar"] .sidebar-brand h2 {
+        color: #FFFFFF !important;
+        margin: 0;
+        font-size: 1.25rem;
+        font-weight: 700;
+    }
+    [data-testid="stSidebar"] .sidebar-brand p {
+        color: #FFF5E6 !important;
+        margin: 0.25rem 0 0 0;
+        font-size: 0.8rem;
+    }
+    [data-testid="stSidebar"] a {
+        color: #FFD699 !important;
+        font-weight: 600;
+    }
+    [data-testid="stSidebar"] [data-testid="stRadio"] label {
+        background: rgba(255,255,255,0.08);
+        border-radius: 8px;
+        padding: 0.35rem 0.5rem;
+        margin-bottom: 0.25rem;
+    }
+    [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
+        background: rgba(247,148,29,0.35);
+    }
+    [data-testid="stSidebar"] button {
+        background: #F7941D !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        font-weight: 600 !important;
+    }
+    [data-testid="stSidebar"] button:hover {
+        background: #FFB347 !important;
+        color: #4B2876 !important;
+    }
+
+    /* Main content */
     h1, h2, h3 { color: #4B2876 !important; }
-    [data-testid="stMetricValue"] { color: #4B2876 !important; }
-    [data-testid="stMetricDelta"] svg { stroke: #F7941D !important; }
-    div[data-testid="stButton"] button[kind="primary"],
-    div[data-testid="stButton"] button {
+    [data-testid="stMetricValue"] { color: #4B2876 !important; font-weight: 700; }
+    [data-testid="stMetricLabel"] { color: #6B4E8C !important; }
+
+    /* Campus cards */
+    .campus-card {
+        background: #FFFFFF;
+        border: 2px solid #E8DFF5;
+        border-left: 6px solid #F7941D;
+        border-radius: 12px;
+        padding: 1rem 1.2rem;
+        margin-bottom: 0.5rem;
+        box-shadow: 0 2px 8px rgba(75,40,118,0.08);
+    }
+    .campus-card:hover {
         border-color: #4B2876;
+        box-shadow: 0 4px 14px rgba(75,40,118,0.15);
     }
-    div[data-testid="stButton"] button:hover {
-        border-color: #F7941D;
+    .campus-card-icon { font-size: 2rem; line-height: 1; }
+    .campus-card-name {
         color: #4B2876;
+        font-weight: 700;
+        font-size: 1.05rem;
+        margin: 0.4rem 0 0.15rem 0;
     }
+    .campus-card-pct {
+        color: #F7941D;
+        font-size: 1.75rem;
+        font-weight: 800;
+        line-height: 1.1;
+    }
+    .campus-card-meta { color: #888; font-size: 0.85rem; }
+
+    /* Campus open buttons */
+    div[data-testid="stButton"] button[kind="secondary"],
+    div.campus-card + div[data-testid="stButton"] button {
+        background: linear-gradient(90deg, #4B2876, #6B3FA0) !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        font-weight: 600 !important;
+        border-radius: 8px !important;
+        padding: 0.6rem 1rem !important;
+    }
+    div[data-testid="stButton"] button[kind="secondary"]:hover,
+    div.campus-card + div[data-testid="stButton"] button:hover {
+        background: linear-gradient(90deg, #F7941D, #FFB347) !important;
+        color: #4B2876 !important;
+    }
+
     [data-testid="stExpander"] summary { color: #4B2876; font-weight: 600; }
     </style>
     """,
@@ -89,11 +176,18 @@ def render_dashboard(parsed: dict[str, dict]):
     cols = st.columns(2)
     for i, (campus, info) in enumerate(summary.items()):
         with cols[i % 2]:
-            if st.button(
-                f"{info['icon']}  {campus}  —  {info['overall']}%  ({info['count']} locations)",
-                key=f"campus_btn_{campus}",
-                use_container_width=True,
-            ):
+            st.markdown(
+                f"""
+                <div class="campus-card">
+                    <div class="campus-card-icon">{info['icon']}</div>
+                    <div class="campus-card-name">{campus}</div>
+                    <div class="campus-card-pct">{info['overall']}%</div>
+                    <div class="campus-card-meta">{info['count']} locations tracked</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button("View campus details →", key=f"campus_btn_{campus}", use_container_width=True):
                 st.session_state["selected_campus"] = campus
                 st.session_state["page"] = "Campus Detail"
                 st.rerun()
@@ -337,9 +431,41 @@ def render_history():
                     )
 
 
+def render_data_source_help():
+    """Explain how sheet data is parsed — for verifying against Google Sheets."""
+    with st.expander("How this app reads your Google Sheet"):
+        st.markdown(
+            """
+            **Source:** Each campus tab is exported as CSV from Google Sheets every 5 minutes.
+
+            **Per location** (e.g. *Desasiswa Aman Damai K01*):
+            1. Find the location name in **column B**
+            2. Read the **PERCENT** row (3 rows below the location)
+            3. For each **date block** across the sheet, read 8 activities:
+               Trunking, Lay Cable, Termination, UTP Point, AP Mounting,
+               Slab Coring, Rack Installation, Fiber Optic
+
+            **Campus overall %:** average of the latest summary row at the bottom of the sheet,
+            or average across all locations if that row is missing.
+
+            **Charts:** average of all location PERCENT values for each date.
+
+            If numbers look wrong, compare with the **PERCENT** row for a location on the same date in your sheet.
+            """
+        )
+
+
 def main():
-    st.sidebar.title("USM Progress")
-    st.sidebar.markdown(f"[Open Google Sheet](https://docs.google.com/spreadsheets/d/{SHEET_ID})")
+    st.sidebar.markdown(
+        """
+        <div class="sidebar-brand">
+            <h2>USM Progress</h2>
+            <p>Campus installation tracker</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.sidebar.markdown(f"[Open Google Sheet ↗](https://docs.google.com/spreadsheets/d/{SHEET_ID})")
 
     with st.sidebar.expander("Sheet tabs loaded"):
         for name in SHEET_TABS:
@@ -370,10 +496,13 @@ def main():
 
     if choice == "Dashboard":
         render_dashboard(parsed)
+        render_data_source_help()
     elif choice == "Campus Detail":
         render_campus_detail(parsed)
+        render_data_source_help()
     elif choice == "Overall Data":
         render_overall_data(parsed)
+        render_data_source_help()
     elif choice == "Daily History":
         render_history()
 

@@ -76,7 +76,8 @@ def _find_date_blocks(header_row: pd.Series) -> list[tuple[int, list[int]]]:
         prev = str(header_row.iloc[ti - 1]).strip().lower() if ti > 0 else ""
         if prev == "date":
             date_col = ti - 1
-            act_cols = list(range(ti + 1, ti + 1 + len(ACTIVITIES)))
+            # PERCENT row: first activity is on the Trunking column (ti), not ti+1
+            act_cols = list(range(ti, ti + len(ACTIVITIES)))
         else:
             date_col = ti
             act_cols = list(range(ti + 2, ti + 2 + len(ACTIVITIES)))
@@ -160,16 +161,16 @@ def parse_progress_sheet(
 
 
 def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
-    """Parse rows ~89+ with date in col 3 and activity percentages."""
+    """Parse bottom summary table: date in col 4, activity % in cols 5–12."""
     records: list[dict] = []
     for row_idx in range(len(df) - 1, max(0, len(df) - 30), -1):
         row = df.iloc[row_idx]
-        date_val = str(row.iloc[3]).strip() if len(row) > 3 else ""
+        date_val = str(row.iloc[4]).strip() if len(row) > 4 else ""
         if not _looks_like_date(date_val):
             continue
         record = {"Date": date_val}
         for i, act in enumerate(ACTIVITIES):
-            col = 4 + i
+            col = 5 + i
             if col < len(row):
                 record[act] = _parse_percent(row.iloc[col])
         if any(record.get(a) is not None for a in ACTIVITIES):
