@@ -240,33 +240,7 @@ CAMPUS_PAGES = {
 
 
 def render_dashboard(parsed: dict[str, dict]):
-    st.header("Campus Overview")
-    st.caption(
-        "Choose a campus below to view current average percentages and daily trends. "
-        "INDUK groups related locations before calculating averages."
-    )
-
-    summary = campus_sheets_summary(parsed)
-    cols = st.columns(2)
-    for i, (campus, info) in enumerate(summary.items()):
-        with cols[i % 2]:
-            st.markdown(
-                f"""
-                <div class="campus-card">
-                    <div class="campus-card-icon">{info['icon']}</div>
-                    <div class="campus-card-name">{campus}</div>
-                    <div class="campus-card-pct">{info['overall']}%</div>
-                    <div class="campus-card-meta">{info['count']} locations tracked</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            st.page_link(
-                CAMPUS_PAGES[campus],
-                label="Check daily data →",
-                icon=CAMPUS_ICONS.get(campus, "🏫"),
-                use_container_width=True,
-            )
+    st.header("Dashboard")
 
     campus_options = ["All campuses (combined)"] + campus_sheet_names()
     selected_campus = st.selectbox(
