@@ -17,7 +17,6 @@ from lib.data_parser import (
     aggregate_overall_by_date,
     available_dates,
     campus_date_snapshot,
-    campus_sheets_summary,
     get_campus_overall,
     parse_progress_sheet,
     sheet_overall_percent,
