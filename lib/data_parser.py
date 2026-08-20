@@ -209,11 +209,25 @@ def available_dates(df: pd.DataFrame) -> list[str]:
     return sorted(list(dict.fromkeys(clean)), key=_parse_date_key)
 
 
+def _cell_display(value) -> str:
+    """Blank cells are treated as not available / not applicable."""
+    text = "" if value is None else str(value).strip()
+    return text if text else "N/A"
+
+
+def _row_label(df: pd.DataFrame, row_idx: int, location_col: int, progress_col: int) -> str:
+    loc = str(df.iloc[row_idx, location_col]).strip().upper() if location_col < len(df.columns) else ""
+    prog = str(df.iloc[row_idx, progress_col]).strip().upper() if progress_col < len(df.columns) else ""
+    return loc or prog
+
+
 def campus_date_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
     """
-    Build an Excel-like snapshot (DONE/TOTAL/PERCENTAGE rows) for one campus date.
-    Public API used by Check Daily Data pages.
-    Returns columns: Location, Progress, <activities...>
+    Excel-like snapshot for one campus date block.
+
+    Includes location DONE / TOTAL / PERCENTAGE rows, plus bottom summary rows:
+    TOTAL DONE, OVERALL TOTAL, AVERAGE PERCENTAGE.
+    Empty cells are shown as N/A (not available / not applicable).
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -232,22 +246,36 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
     rows: list[dict[str, str]] = []
     current_location = ""
 
+    summary_labels = {"TOTAL DONE", "OVERALL TOTAL", "AVERAGE PERCENTAGE", "AVERAGE PERCENT"}
+    progress_labels = {"DONE", "TOTAL", "PERCENT", "PERCENTAGE"}
+
     for r in range(header_idx + 1, len(df)):
+        loc_val = str(df.iloc[r, location_col]).strip()
         progress = str(df.iloc[r, progress_col]).strip().upper()
-        if progress not in {"DONE", "TOTAL", "PERCENT", "PERCENTAGE"}:
+        loc_upper = loc_val.upper()
+
+        is_summary = loc_upper in summary_labels
+        is_progress = progress in progress_labels
+        if not is_summary and not is_progress:
             continue
 
-        loc_val = str(df.iloc[r, location_col]).strip()
-        if progress == "DONE":
+        if progress == "DONE" and loc_val and loc_upper not in summary_labels:
             current_location = loc_val
 
+        if is_summary:
+            location_out = loc_val
+            progress_out = ""
+        else:
+            location_out = current_location if progress == "DONE" else ""
+            progress_out = "PERCENTAGE" if progress == "PERCENT" else progress
+
         row_data: dict[str, str] = {
-            "Location": current_location if progress == "DONE" else "",
-            "Progress": "PERCENTAGE" if progress == "PERCENT" else progress,
+            "Location": location_out,
+            "Progress": progress_out,
         }
         for act_name, col_idx in zip(ACTIVITIES, act_cols):
-            val = str(df.iloc[r, col_idx]).strip() if col_idx < len(df.columns) else ""
-            row_data[act_name] = val
+            val = df.iloc[r, col_idx] if col_idx < len(df.columns) else ""
+            row_data[act_name] = _cell_display(val)
         rows.append(row_data)
 
     return pd.DataFrame(rows)
@@ -265,26 +293,55 @@ __all__ = [
 ]
 
 
+def _find_average_percentage_row(
+    df: pd.DataFrame, location_col: int, progress_col: int
+) -> int | None:
+    """Locate the bottom AVERAGE PERCENTAGE summary row."""
+    for row_idx in range(len(df) - 1, max(-1, len(df) - 40), -1):
+        label = _row_label(df, row_idx, location_col, progress_col)
+        if label in {"AVERAGE PERCENTAGE", "AVERAGE PERCENT"}:
+            return row_idx
+    return None
+
+
 def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
-    """Parse bottom summary table: date in col 4, activity % in cols 5–12."""
+    """
+    Read campus AVERAGE PERCENTAGE values for each date block.
+
+    Sheet rules (already computed in Excel):
+    - Trunking average % = average of location Trunking percentages
+    - Other activities = TOTAL DONE / OVERALL TOTAL
+    Empty activity cells remain None (N/A).
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    header_idx = _detect_header_row_index(df)
+    header_row = df.iloc[header_idx]
+    location_col, progress_col = _detect_location_progress_cols(header_row)
+    blocks = _find_date_blocks(header_row)
+    block_dates = _extract_dates_for_blocks(df, blocks)
+    avg_row_idx = _find_average_percentage_row(df, location_col, progress_col)
+    if avg_row_idx is None or not blocks:
+        return pd.DataFrame()
+
+    avg_row = df.iloc[avg_row_idx]
     records: list[dict] = []
-    for row_idx in range(len(df) - 1, max(0, len(df) - 30), -1):
-        row = df.iloc[row_idx]
-        date_val = str(row.iloc[4]).strip() if len(row) > 4 else ""
-        if not _looks_like_date(date_val):
+    for date_label, (_, act_cols) in zip(block_dates, blocks):
+        if not date_label:
             continue
-        record = {"Date": date_val}
-        for i, act in enumerate(ACTIVITIES):
-            col = 5 + i
-            if col < len(row):
-                record[act] = _parse_percent(row.iloc[col])
+        record: dict = {"Date": date_label}
+        for act_name, col_idx in zip(ACTIVITIES, act_cols):
+            record[act_name] = (
+                _parse_percent(avg_row.iloc[col_idx]) if col_idx < len(avg_row) else None
+            )
         if any(record.get(a) is not None for a in ACTIVITIES):
             records.append(record)
 
     if not records:
         return pd.DataFrame()
 
-    result = pd.DataFrame(records).drop_duplicates(subset=["Date"])
+    result = pd.DataFrame(records).drop_duplicates(subset=["Date"], keep="last")
     result["_sort"] = result["Date"].map(_parse_date_key)
     return result.sort_values("_sort").drop(columns=["_sort"]).reset_index(drop=True)
 
