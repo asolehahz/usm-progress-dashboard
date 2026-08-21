@@ -62,6 +62,13 @@ COUNTABLE_ACTIVITIES = [
     "AP Mounting",
 ]
 
+# INDUK desa Average % = mean of location percentages (not done/total).
+LOCATION_AVG_ACTIVITIES = [
+    "Trunking",
+    "Lay Cable",
+    "Termination",
+]
+
 ACTIVE_EQUIPMENT = [
     "Controller",
     "Access Switch",

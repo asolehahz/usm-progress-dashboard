@@ -14,6 +14,7 @@ from config import (
     COUNTABLE_ACTIVITIES,
     FRACTION_METRIC_ACTIVITIES,
     INDUK_LOCATION_GROUPS,
+    LOCATION_AVG_ACTIVITIES,
     TABLE_COLUMNS,
     campus_sheet_names,
 )
@@ -358,22 +359,31 @@ def _activity_values_from_row(
 def _average_percent_from_totals(
     total_done: dict[str, float | None],
     overall_total: dict[str, float | None],
-    trunking_percentages: list[float],
+    location_percentages: dict[str, list[float]] | list[float] | None = None,
     columns: list[str] | None = None,
 ) -> dict[str, float | None]:
-    """Trunking = average of location %; other columns = total done / overall total."""
+    """
+    Average % rules:
+    - Trunking / Lay Cable / Termination: mean of location percentages
+      (sum % / number of locations), when location lists are provided.
+    - Other columns: TOTAL DONE / OVERALL TOTAL.
+    """
     cols = columns or ACTIVITIES
+    # Back-compat: old callers passed a bare Trunking % list.
+    if isinstance(location_percentages, list):
+        loc_pcts: dict[str, list[float]] = {"Trunking": location_percentages}
+    else:
+        loc_pcts = location_percentages or {}
+
     result: dict[str, float | None] = {}
     for act in cols:
-        if act == "Trunking":
-            if trunking_percentages:
-                result[act] = round(sum(trunking_percentages) / len(trunking_percentages), 2)
-            else:
-                done = total_done.get(act)
-                total = overall_total.get(act)
-                result[act] = (
-                    round(done / total * 100, 2) if done is not None and total else None
-                )
+        if act in LOCATION_AVG_ACTIVITIES and loc_pcts.get(act):
+            values = loc_pcts[act]
+            result[act] = round(sum(values) / len(values), 2)
+            continue
+        if act == "Trunking" and loc_pcts.get("Trunking"):
+            values = loc_pcts["Trunking"]
+            result[act] = round(sum(values) / len(values), 2)
             continue
         done = total_done.get(act)
         total = overall_total.get(act)
@@ -388,11 +398,22 @@ def _accumulate_group_values(
     location_blocks: list[tuple[str, int, int, int]],
     df: pd.DataFrame,
     act_cols: list[int],
-) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, float]], dict[str, list[float]]]:
-    """Roll up DONE/TOTAL (+ equipment) and Trunking % lists per INDUK desa group."""
+) -> tuple[
+    dict[str, dict[str, float]],
+    dict[str, dict[str, float]],
+    dict[str, dict[str, list[float]]],
+]:
+    """
+    Roll up DONE/TOTAL (+ equipment) and per-location % lists per INDUK desa group.
+
+    Location % lists are kept for Trunking / Lay Cable / Termination so desa
+    Average Percentage = sum(location %) / number of locations.
+    """
     grouped_done: dict[str, dict[str, float]] = {}
     grouped_total: dict[str, dict[str, float]] = {}
-    grouped_trunk_pcts: dict[str, list[float]] = {}
+    grouped_loc_pcts: dict[str, dict[str, list[float]]] = {}
+
+    act_index = {name: idx for name, idx in zip(ACTIVITIES, act_cols)}
 
     for location, done_row, total_row, percent_row in location_blocks:
         group = _induk_group_name(location)
@@ -400,9 +421,16 @@ def _accumulate_group_values(
             continue
         done_vals = _activity_values_from_row(df.iloc[done_row], act_cols, include_equipment=True)
         total_vals = _activity_values_from_row(df.iloc[total_row], act_cols, include_equipment=True)
-        trunk_pct = _parse_percent(df.iloc[percent_row, act_cols[0]])
-        if trunk_pct is not None:
-            grouped_trunk_pcts.setdefault(group, []).append(trunk_pct)
+
+        for act_name in LOCATION_AVG_ACTIVITIES:
+            col_idx = act_index.get(act_name)
+            if col_idx is None:
+                continue
+            pct = _parse_percent(df.iloc[percent_row, col_idx])
+            # Count every location in the group (blank % counts as 0).
+            grouped_loc_pcts.setdefault(group, {}).setdefault(act_name, []).append(
+                0.0 if pct is None else pct
+            )
 
         for col in TABLE_COLUMNS:
             done_num = done_vals.get(col)
@@ -414,7 +442,7 @@ def _accumulate_group_values(
                 grouped_total.setdefault(group, {}).setdefault(col, 0.0)
                 grouped_total[group][col] += total_num
 
-    return grouped_done, grouped_total, grouped_trunk_pcts
+    return grouped_done, grouped_total, grouped_loc_pcts
 
 
 def _compute_induk_overall_by_date(
@@ -436,12 +464,16 @@ def _compute_induk_overall_by_date(
         if not date_label:
             continue
 
-        grouped_done, grouped_total, grouped_trunk_pcts = _accumulate_group_values(
+        grouped_done, grouped_total, grouped_loc_pcts = _accumulate_group_values(
             location_blocks, df, act_cols
         )
 
         if group_filter:
-            if group_filter not in grouped_done and group_filter not in grouped_total:
+            if (
+                group_filter not in grouped_done
+                and group_filter not in grouped_total
+                and group_filter not in grouped_loc_pcts
+            ):
                 continue
             groups = [group_filter]
         else:
@@ -449,12 +481,13 @@ def _compute_induk_overall_by_date(
 
         campus_done: dict[str, float | None] = {col: 0.0 for col in ACTIVITIES}
         campus_total: dict[str, float | None] = {col: 0.0 for col in ACTIVITIES}
-        trunking_pcts: list[float] = []
+        campus_loc_pcts: dict[str, list[float]] = {act: [] for act in LOCATION_AVG_ACTIVITIES}
         for group in groups:
             for col in ACTIVITIES:
                 campus_done[col] = (campus_done[col] or 0.0) + grouped_done.get(group, {}).get(col, 0.0)
                 campus_total[col] = (campus_total[col] or 0.0) + grouped_total.get(group, {}).get(col, 0.0)
-            trunking_pcts.extend(grouped_trunk_pcts.get(group, []))
+            for act in LOCATION_AVG_ACTIVITIES:
+                campus_loc_pcts[act].extend(grouped_loc_pcts.get(group, {}).get(act, []))
 
         for col in ACTIVITIES:
             # Keep true zeros (0 progress); only skip unused columns via averages None.
@@ -469,7 +502,9 @@ def _compute_induk_overall_by_date(
                     campus_total[col] = None
 
         record = {"Date": _normalize_date_label(date_label)}
-        averages = _average_percent_from_totals(campus_done, campus_total, trunking_pcts)
+        averages = _average_percent_from_totals(
+            campus_done, campus_total, campus_loc_pcts
+        )
         record.update(averages)
         for act in FRACTION_METRIC_ACTIVITIES:
             done = campus_done.get(act)
@@ -557,7 +592,7 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
 
     _, act_cols = blocks[block_i]
     location_blocks = _iter_location_blocks(df, header_idx, location_col, progress_col)
-    grouped_done, grouped_total, grouped_trunk_pcts = _accumulate_group_values(
+    grouped_done, grouped_total, grouped_loc_pcts = _accumulate_group_values(
         location_blocks, df, act_cols
     )
 
@@ -572,11 +607,11 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
         total_row = {"Location": "", "Progress": "TOTAL"}
         pct_row = {"Location": "", "Progress": "PERCENTAGE"}
 
-        trunk_pcts = grouped_trunk_pcts.get(group_name, [])
+        loc_pcts = grouped_loc_pcts.get(group_name, {})
         averages = _average_percent_from_totals(
             {col: done_map.get(col) for col in TABLE_COLUMNS},
             {col: total_map.get(col) for col in TABLE_COLUMNS},
-            trunk_pcts,
+            loc_pcts,
             columns=TABLE_COLUMNS,
         )
 

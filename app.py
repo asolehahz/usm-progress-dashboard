@@ -164,6 +164,26 @@ st.markdown(
     }
 
     [data-testid="stExpander"] summary { color: #4B2876; font-weight: 600; }
+
+    /* Daily data table — wrap long location / cell text */
+    div[data-testid="stTable"] table {
+        table-layout: fixed;
+        width: 100%;
+    }
+    div[data-testid="stTable"] th,
+    div[data-testid="stTable"] td {
+        white-space: normal !important;
+        overflow-wrap: anywhere !important;
+        word-break: break-word !important;
+        vertical-align: top !important;
+        line-height: 1.35 !important;
+        padding: 0.45rem 0.55rem !important;
+    }
+    div[data-testid="stTable"] th:first-child,
+    div[data-testid="stTable"] td:first-child {
+        min-width: 9rem;
+        max-width: 14rem;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -326,7 +346,8 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
     if snapshot.empty:
         st.info("No DONE/TOTAL/PERCENTAGE rows found for this date.")
     else:
-        st.dataframe(snapshot, width="stretch", hide_index=True)
+        # st.table wraps long text in cells; st.dataframe (canvas) cannot.
+        st.table(snapshot)
 
 
 def render_issues():
