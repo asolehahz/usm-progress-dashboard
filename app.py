@@ -163,18 +163,14 @@ def load_data() -> dict[str, dict]:
     return parsed
 
 
-def render_activity_average_panel(overall: pd.DataFrame, title: str, caption: str = ""):
+def render_activity_average_panel(overall: pd.DataFrame, title: str):
     """Show latest-date average % only (metric boxes, no historical chart)."""
     if overall is None or overall.empty:
         st.warning("No average percentage data found for this selection.")
         return
 
     latest = overall.iloc[-1]
-    latest_date = latest.get("Date", "—")
     st.subheader(title)
-    if caption:
-        st.caption(caption)
-    st.caption(f"Showing **latest data only** — date: **{latest_date}**")
 
     metric_cols = st.columns(4)
     for i, act in enumerate(ACTIVITIES):
@@ -187,7 +183,7 @@ def render_dashboard(parsed: dict[str, dict]):
     st.header("Dashboard")
 
     selected = st.selectbox(
-        "Select campus / desa to view average percentage",
+        "Select campus / desa",
         options=dashboard_select_options(),
         key="dashboard_campus_select",
     )
@@ -196,24 +192,18 @@ def render_dashboard(parsed: dict[str, dict]):
     if desa:
         raw_df = parsed.get("INDUK", {}).get("raw_df")
         overall = get_induk_desa_overall(raw_df, desa) if raw_df is not None else pd.DataFrame()
+        icon = CAMPUS_ICONS.get("INDUK", "🏫")
         render_activity_average_panel(
             overall,
-            title=f"🏛️ Desa average % — {desa}",
-            caption="Latest grouped % from INDUK (same desa groups as INDUK(DESA)).",
+            title=f"{icon} {desa}",
         )
         return
 
     overall = parsed.get(campus, {}).get("overall", pd.DataFrame())
     icon = CAMPUS_ICONS.get(campus, "🏫")
-    extra = (
-        " INDUK locations are grouped by desa before averaging."
-        if campus == "INDUK"
-        else ""
-    )
     render_activity_average_panel(
         overall,
-        title=f"{icon} Campus average % — {campus}",
-        caption=f"Latest AVERAGE PERCENTAGE from the sheet.{extra}",
+        title=f"{icon} {campus}",
     )
 
 
