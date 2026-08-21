@@ -11,6 +11,7 @@ from config import (
     ACTIVITIES,
     ACTIVE_EQUIPMENT,
     CAMPUS_ICONS,
+    COUNTABLE_ACTIVITIES,
     INDUK_LOCATION_GROUPS,
     TABLE_COLUMNS,
     campus_sheet_names,
@@ -517,8 +518,8 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
         )
 
         for col in TABLE_COLUMNS:
-            done_row[col] = _cell_display(done_map.get(col))
-            total_row[col] = _cell_display(total_map.get(col))
+            done_row[col] = _display_activity_cell(done_map.get(col), col, "DONE")
+            total_row[col] = _display_activity_cell(total_map.get(col), col, "TOTAL")
             pct_val = averages.get(col)
             pct_row[col] = f"{pct_val:.2f}%" if pct_val is not None else "N/A"
 
@@ -548,7 +549,7 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
             if label == "AVERAGE PERCENTAGE":
                 row[col] = f"{val:.2f}%" if val is not None else "N/A"
             else:
-                row[col] = _cell_display(val)
+                row[col] = _display_activity_cell(val, col, label)
         rows.append(row)
 
     return pd.DataFrame(rows)
@@ -561,10 +562,24 @@ def get_campus_overall(df: pd.DataFrame, campus: str) -> pd.DataFrame:
     return _parse_overall_summary(df)
 
 
-def _cell_display(value) -> str:
-    """Blank cells are treated as not available / not applicable."""
+def _cell_display(value, as_count: bool = False) -> str:
+    """Blank cells are N/A. Countable DONE/TOTAL values show as whole numbers."""
     text = "" if value is None else str(value).strip()
-    return text if text else "N/A"
+    if not text:
+        return "N/A"
+    if as_count:
+        num = _parse_number(value)
+        if num is None:
+            return text
+        return str(int(round(num)))
+    return text
+
+
+def _display_activity_cell(value, column: str, progress_label: str) -> str:
+    """Format DONE/TOTAL counts as integers for countable activities."""
+    count_rows = {"DONE", "TOTAL", "TOTAL DONE", "OVERALL TOTAL"}
+    as_count = column in COUNTABLE_ACTIVITIES and progress_label.upper() in count_rows
+    return _cell_display(value, as_count=as_count)
 
 
 def _row_label(df: pd.DataFrame, row_idx: int, location_col: int, progress_col: int) -> str:
@@ -633,7 +648,9 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
         }
         for act_name, col_idx in zip(ACTIVITIES, act_cols):
             val = df.iloc[r, col_idx] if col_idx < len(df.columns) else ""
-            row_data[act_name] = _cell_display(val)
+            # TOTAL DONE / OVERALL TOTAL use Location as the row kind
+            kind = loc_upper if is_summary else progress_out
+            row_data[act_name] = _display_activity_cell(val, act_name, kind)
         for eq_name, col_idx in zip(ACTIVE_EQUIPMENT, eq_cols):
             val = df.iloc[r, col_idx] if col_idx < len(df.columns) else ""
             row_data[eq_name] = _cell_display(val)

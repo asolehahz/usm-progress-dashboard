@@ -14,6 +14,7 @@ import plotly.graph_objects as go
 from config import (
     ACTIVITIES,
     CAMPUS_ICONS,
+    DASHBOARD_CHART_ACTIVITIES,
     SHEET_ID,
     campus_sheet_names,
     dashboard_select_options,
@@ -181,7 +182,7 @@ def load_data() -> dict[str, dict]:
 
 
 def render_activity_average_panel(overall: pd.DataFrame, title: str):
-    """Latest % metric boxes + daily trend line chart for all activities."""
+    """Latest % metric boxes + line chart for UTP Point, AP Mounting, Fiber Optic."""
     if overall is None or overall.empty:
         st.warning("No average percentage data found for this selection.")
         return
@@ -197,7 +198,7 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
 
     date_order = overall["Date"].tolist()
     fig = go.Figure()
-    for i, act in enumerate(ACTIVITIES):
+    for i, act in enumerate(DASHBOARD_CHART_ACTIVITIES):
         if act in overall.columns:
             fig.add_trace(
                 go.Scatter(

@@ -40,6 +40,22 @@ ACTIVITIES = [
     "Fiber Optic",
 ]
 
+# Dashboard line chart — only these activities.
+DASHBOARD_CHART_ACTIVITIES = [
+    "UTP Point",
+    "AP Mounting",
+    "Fiber Optic",
+]
+
+# DONE / TOTAL counts (whole numbers, not decimals).
+COUNTABLE_ACTIVITIES = [
+    "Trunking",
+    "Lay Cable",
+    "Termination",
+    "UTP Point",
+    "AP Mounting",
+]
+
 ACTIVE_EQUIPMENT = [
     "Controller",
     "Access Switch",
