@@ -493,6 +493,53 @@ def get_induk_desa_overall(df: pd.DataFrame, desa_name: str) -> pd.DataFrame:
     """Average % time series for one INDUK desa group."""
     return _compute_induk_overall_by_date(df, group_filter=desa_name)
 
+def _read_sheet_summary_for_block(
+    df: pd.DataFrame,
+    act_cols: list[int],
+    location_col: int,
+    progress_col: int,
+) -> dict[str, dict[str, str]]:
+    """
+    Read TOTAL DONE / OVERALL TOTAL / AVERAGE PERCENTAGE directly from the sheet
+    for one date block so daily data matches Google Sheets.
+    """
+    labels = {
+        "TOTAL DONE": "TOTAL DONE",
+        "OVERALL TOTAL": "OVERALL TOTAL",
+        "AVERAGE PERCENTAGE": "AVERAGE PERCENTAGE",
+        "AVERAGE PERCENT": "AVERAGE PERCENTAGE",
+    }
+    eq_cols = _equipment_cols(act_cols, len(df.columns))
+    out: dict[str, dict[str, str]] = {}
+
+    for row_idx in range(len(df)):
+        label = _row_label(df, row_idx, location_col, progress_col)
+        canonical = labels.get(label)
+        if not canonical:
+            continue
+        row_data: dict[str, str] = {}
+        for act_name, col_idx in zip(ACTIVITIES, act_cols):
+            raw = df.iloc[row_idx, col_idx] if col_idx < len(df.columns) else ""
+            if canonical == "AVERAGE PERCENTAGE":
+                pct = _parse_percent(raw)
+                row_data[act_name] = f"{pct:.2f}%" if pct is not None else "N/A"
+            else:
+                # Keep sheet values as-is (blank → N/A); do not re-round.
+                text = "" if raw is None else str(raw).strip()
+                row_data[act_name] = text if text else "N/A"
+        for eq_name, col_idx in zip(ACTIVE_EQUIPMENT, eq_cols):
+            raw = df.iloc[row_idx, col_idx] if col_idx < len(df.columns) else ""
+            if canonical == "AVERAGE PERCENTAGE":
+                pct = _parse_percent(raw)
+                row_data[eq_name] = f"{pct:.2f}%" if pct is not None else "N/A"
+            else:
+                text = "" if raw is None else str(raw).strip()
+                row_data[eq_name] = text if text else "N/A"
+        out[canonical] = row_data
+
+    return out
+
+
 def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
     """Excel-like INDUK table with grouped locations for one date block."""
     header_idx = _detect_header_row_index(df)
@@ -541,31 +588,17 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
 
         rows.extend([done_row, total_row, pct_row])
 
-    campus_done = {
-        col: sum(group_vals.get(col, 0.0) for group_vals in grouped_done.values()) or None
-        for col in TABLE_COLUMNS
-    }
-    campus_total = {
-        col: sum(group_vals.get(col, 0.0) for group_vals in grouped_total.values()) or None
-        for col in TABLE_COLUMNS
-    }
-    all_trunk = [p for values in grouped_trunk_pcts.values() for p in values]
-    campus_avg = _average_percent_from_totals(
-        campus_done, campus_total, all_trunk, columns=TABLE_COLUMNS
+    # Campus summary must match Google Sheet (not re-derived from desa groups).
+    sheet_summary = _read_sheet_summary_for_block(
+        df, act_cols, location_col, progress_col
     )
-
-    for label, values in [
-        ("TOTAL DONE", campus_done),
-        ("OVERALL TOTAL", campus_total),
-        ("AVERAGE PERCENTAGE", campus_avg),
-    ]:
+    for label in ("TOTAL DONE", "OVERALL TOTAL", "AVERAGE PERCENTAGE"):
+        values = sheet_summary.get(label)
+        if not values:
+            continue
         row = {"Location": label, "Progress": ""}
         for col in TABLE_COLUMNS:
-            val = values.get(col)
-            if label == "AVERAGE PERCENTAGE":
-                row[col] = f"{val:.2f}%" if val is not None else "N/A"
-            else:
-                row[col] = _display_activity_cell(val, col, label)
+            row[col] = values.get(col, "N/A")
         rows.append(row)
 
     return pd.DataFrame(rows)
