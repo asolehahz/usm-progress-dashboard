@@ -15,6 +15,7 @@ from config import (
     ACTIVITIES,
     CAMPUS_ICONS,
     DASHBOARD_CHART_ACTIVITIES,
+    FRACTION_METRIC_ACTIVITIES,
     SHEET_ID,
     campus_sheet_names,
     dashboard_select_options,
@@ -192,8 +193,18 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
 
     metric_cols = st.columns(4)
     for i, act in enumerate(ACTIVITIES):
-        val = latest.get(act)
-        display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
+        if act in FRACTION_METRIC_ACTIVITIES:
+            done = latest.get(f"{act}__done")
+            total = latest.get(f"{act}__total")
+            if done is not None and total is not None and not (
+                pd.isna(done) or pd.isna(total)
+            ):
+                display = f"{int(total)}/{int(done)}"
+            else:
+                display = "N/A"
+        else:
+            val = latest.get(act)
+            display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
         metric_cols[i % 4].metric(act, display)
 
     date_order = overall["Date"].tolist()

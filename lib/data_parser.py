@@ -12,6 +12,7 @@ from config import (
     ACTIVE_EQUIPMENT,
     CAMPUS_ICONS,
     COUNTABLE_ACTIVITIES,
+    FRACTION_METRIC_ACTIVITIES,
     INDUK_LOCATION_GROUPS,
     TABLE_COLUMNS,
     campus_sheet_names,
@@ -456,13 +457,28 @@ def _compute_induk_overall_by_date(
             trunking_pcts.extend(grouped_trunk_pcts.get(group, []))
 
         for col in ACTIVITIES:
-            campus_done[col] = campus_done[col] if campus_done[col] else None
-            campus_total[col] = campus_total[col] if campus_total[col] else None
+            # Keep true zeros (0 progress); only skip unused columns via averages None.
+            if campus_done[col] == 0.0 and campus_total[col] == 0.0:
+                # Distinguish "no locations contributed" vs real zeros — use totals presence.
+                has_total = any(
+                    col in grouped_total.get(group, {}) for group in groups
+                )
+                has_done = any(col in grouped_done.get(group, {}) for group in groups)
+                if not has_total and not has_done:
+                    campus_done[col] = None
+                    campus_total[col] = None
 
-        record = {"Date": date_label}
+        record = {"Date": _normalize_date_label(date_label)}
         averages = _average_percent_from_totals(campus_done, campus_total, trunking_pcts)
         record.update(averages)
-        if any(record.get(a) is not None for a in ACTIVITIES):
+        for act in FRACTION_METRIC_ACTIVITIES:
+            done = campus_done.get(act)
+            total = campus_total.get(act)
+            record[f"{act}__done"] = None if done is None else int(round(done))
+            record[f"{act}__total"] = None if total is None else int(round(total))
+        if any(record.get(a) is not None for a in ACTIVITIES) or any(
+            record.get(f"{a}__total") is not None for a in FRACTION_METRIC_ACTIVITIES
+        ):
             records.append(record)
 
     if not records:
@@ -673,15 +689,24 @@ __all__ = [
 ]
 
 
+def _find_summary_row(
+    df: pd.DataFrame, location_col: int, progress_col: int, labels: set[str]
+) -> int | None:
+    """Locate a bottom summary row by location/progress label."""
+    for row_idx in range(len(df) - 1, max(-1, len(df) - 40), -1):
+        label = _row_label(df, row_idx, location_col, progress_col)
+        if label in labels:
+            return row_idx
+    return None
+
+
 def _find_average_percentage_row(
     df: pd.DataFrame, location_col: int, progress_col: int
 ) -> int | None:
     """Locate the bottom AVERAGE PERCENTAGE summary row."""
-    for row_idx in range(len(df) - 1, max(-1, len(df) - 40), -1):
-        label = _row_label(df, row_idx, location_col, progress_col)
-        if label in {"AVERAGE PERCENTAGE", "AVERAGE PERCENT"}:
-            return row_idx
-    return None
+    return _find_summary_row(
+        df, location_col, progress_col, {"AVERAGE PERCENTAGE", "AVERAGE PERCENT"}
+    )
 
 
 def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
@@ -692,6 +717,7 @@ def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
     - Trunking average % = average of location Trunking percentages
     - Other activities = TOTAL DONE / OVERALL TOTAL
     Empty activity cells remain None (N/A).
+    Also attaches Done/Total counts for fraction metric activities.
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -702,10 +728,14 @@ def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
     blocks = _find_date_blocks(header_row)
     block_dates = _extract_dates_for_blocks(df, blocks)
     avg_row_idx = _find_average_percentage_row(df, location_col, progress_col)
+    done_row_idx = _find_summary_row(df, location_col, progress_col, {"TOTAL DONE"})
+    total_row_idx = _find_summary_row(df, location_col, progress_col, {"OVERALL TOTAL"})
     if avg_row_idx is None or not blocks:
         return pd.DataFrame()
 
     avg_row = df.iloc[avg_row_idx]
+    done_row = df.iloc[done_row_idx] if done_row_idx is not None else None
+    total_row = df.iloc[total_row_idx] if total_row_idx is not None else None
     records: list[dict] = []
     for date_label, (_, act_cols) in zip(block_dates, blocks):
         if not date_label:
@@ -714,6 +744,25 @@ def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
         for act_name, col_idx in zip(ACTIVITIES, act_cols):
             record[act_name] = (
                 _parse_percent(avg_row.iloc[col_idx]) if col_idx < len(avg_row) else None
+            )
+        for act_name in FRACTION_METRIC_ACTIVITIES:
+            try:
+                col_idx = act_cols[ACTIVITIES.index(act_name)]
+            except (ValueError, IndexError):
+                continue
+            done_val = (
+                _parse_number(done_row.iloc[col_idx])
+                if done_row is not None and col_idx < len(done_row)
+                else None
+            )
+            total_val = (
+                _parse_number(total_row.iloc[col_idx])
+                if total_row is not None and col_idx < len(total_row)
+                else None
+            )
+            record[f"{act_name}__done"] = None if done_val is None else int(round(done_val))
+            record[f"{act_name}__total"] = (
+                None if total_val is None else int(round(total_val))
             )
         if any(record.get(a) is not None for a in ACTIVITIES):
             records.append(record)

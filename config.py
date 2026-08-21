@@ -47,6 +47,12 @@ DASHBOARD_CHART_ACTIVITIES = [
     "Fiber Optic",
 ]
 
+# Dashboard metrics — show Done/Total instead of %.
+FRACTION_METRIC_ACTIVITIES = [
+    "UTP Point",
+    "AP Mounting",
+]
+
 # DONE / TOTAL counts (whole numbers, not decimals).
 COUNTABLE_ACTIVITIES = [
     "Trunking",
@@ -79,7 +85,7 @@ CACHE_TTL_SECONDS = 300
 # (display_name, match_pattern)
 INDUK_LOCATION_GROUPS: list[tuple[str, str]] = [
     ("DS AMAN DAMAI (K01-08)", r"aman\s*damai"),
-    ("K18 & K19", r"^k1[89]$"),
+    ("K18 & K19", r"^k\s*1[89]\b"),
     ("DS Bakti Permai (H06,07,09, 16,17, 51)", r"bakti\s*permai"),
     ("DS Indah Kembara (L06,07,11,12)", r"indah\s*kembara"),
     ("DS Saujana (M03, 04)", r"saujana"),
