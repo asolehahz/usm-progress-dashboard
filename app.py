@@ -11,13 +11,22 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from config import ACTIVITIES, CAMPUS_ICONS, INDUK_LOCATION_GROUPS, SHEET_ID, campus_sheet_names
+from config import (
+    ACTIVITIES,
+    CAMPUS_ICONS,
+    INDUK_LOCATION_GROUPS,
+    SHEET_ID,
+    campus_sheet_names,
+    dashboard_select_options,
+    parse_dashboard_selection,
+)
 from lib.auth import admin_login_form
 from lib.data_parser import (
     aggregate_overall_by_date,
     available_dates,
     campus_date_snapshot,
     get_campus_overall,
+    get_induk_desa_overall,
     parse_progress_sheet,
     sheet_overall_percent,
 )
@@ -186,6 +195,7 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str, caption: st
         display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
         metric_cols[i % 4].metric(act, display)
 
+    date_order = overall["Date"].tolist()
     fig = go.Figure()
     for i, act in enumerate(ACTIVITIES):
         if act in overall.columns:
@@ -205,6 +215,7 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str, caption: st
         xaxis_title="Date",
         yaxis_title="Progress (%)",
         yaxis_range=[0, 105],
+        xaxis=dict(categoryorder="array", categoryarray=date_order, type="category"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
         margin=dict(l=40, r=20, t=40, b=40),
         paper_bgcolor="#FFFFFF",
@@ -213,6 +224,40 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str, caption: st
         colorway=CHART_COLORS,
     )
     st.plotly_chart(fig, width="stretch")
+
+
+def render_dashboard(parsed: dict[str, dict]):
+    st.header("Dashboard")
+
+    selected = st.selectbox(
+        "Select campus / desa to view average percentage",
+        options=dashboard_select_options(),
+        key="dashboard_campus_select",
+    )
+    campus, desa = parse_dashboard_selection(selected)
+
+    if desa:
+        raw_df = parsed.get("INDUK", {}).get("raw_df")
+        overall = get_induk_desa_overall(raw_df, desa) if raw_df is not None else pd.DataFrame()
+        render_activity_average_panel(
+            overall,
+            title=f"🏛️ Desa average % by date — {desa}",
+            caption="Grouped from INDUK DONE/TOTAL by date (same desa groups as INDUK(DESA)).",
+        )
+        return
+
+    overall = parsed.get(campus, {}).get("overall", pd.DataFrame())
+    icon = CAMPUS_ICONS.get(campus, "🏫")
+    extra = (
+        " INDUK locations are grouped by desa before averaging."
+        if campus == "INDUK"
+        else ""
+    )
+    render_activity_average_panel(
+        overall,
+        title=f"{icon} Campus average % by date — {campus}",
+        caption=f"From sheet AVERAGE PERCENTAGE / grouped totals.{extra}",
+    )
 
 
 def _campus_page_runner(campus: str):
@@ -238,29 +283,6 @@ CAMPUS_PAGES = {
 }
 
 
-def render_dashboard(parsed: dict[str, dict]):
-    st.header("Dashboard")
-
-    selected_campus = st.selectbox(
-        "Select campus to view average percentage",
-        options=campus_sheet_names(),
-        key="dashboard_campus_select",
-    )
-
-    overall = parsed.get(selected_campus, {}).get("overall", pd.DataFrame())
-    icon = CAMPUS_ICONS.get(selected_campus, "🏫")
-    extra = (
-        " INDUK locations are grouped (e.g. K01–K08, Bakti Permai) before averaging."
-        if selected_campus == "INDUK"
-        else ""
-    )
-    render_activity_average_panel(
-        overall,
-        title=f"{icon} Campus average % by date — {selected_campus}",
-        caption=f"From the sheet AVERAGE PERCENTAGE row.{extra}",
-    )
-
-
 def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
     campus_names = campus_sheet_names()
     if campus not in campus_names:
@@ -268,10 +290,11 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
     st.session_state["selected_campus"] = campus
     st.header(f"Check Daily Data — {campus}")
     st.caption(
-        "Excel-style view for one date: DONE, TOTAL, PERCENTAGE, plus TOTAL DONE / "
-        "OVERALL TOTAL / AVERAGE PERCENTAGE. Empty cells show as N/A."
+        "Excel-style view for one date: DONE, TOTAL, PERCENTAGE (including Active Equipment: "
+        "Controller, Access Switch, Dist. Switch), plus TOTAL DONE / OVERALL TOTAL / "
+        "AVERAGE PERCENTAGE. Empty cells show as N/A."
         + (
-            " INDUK locations are grouped before totals and percentages are calculated."
+            " INDUK locations are grouped by desa before totals and percentages are calculated."
             if campus == "INDUK"
             else ""
         )
