@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
 
 from config import (
     ACTIVITIES,
@@ -38,19 +37,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-# Distinct hues so activity lines stay easy to tell apart
-CHART_COLORS = [
-    "#4B2876",  # purple
-    "#F7941D",  # orange
-    "#0077B6",  # blue
-    "#2A9D8F",  # teal
-    "#E63946",  # red
-    "#6A994E",  # green
-    "#C77DFF",  # violet
-    "#BC6C25",  # brown
-]
-ACTIVITY_COLORS = {name: CHART_COLORS[i] for i, name in enumerate(ACTIVITIES)}
 
 st.markdown(
     """
