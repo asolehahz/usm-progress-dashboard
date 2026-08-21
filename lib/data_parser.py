@@ -356,6 +356,35 @@ def _activity_values_from_row(
     return values
 
 
+def _mean_location_percentages(
+    location_blocks: list[tuple[str, int, int, int]],
+    df: pd.DataFrame,
+    act_cols: list[int],
+    activities: list[str] | None = None,
+) -> dict[str, float | None]:
+    """
+    Average Percentage for selected activities:
+    sum(location %) / number of locations.
+    Blank location % counts as 0 so every location is included.
+    """
+    acts = activities or LOCATION_AVG_ACTIVITIES
+    buckets: dict[str, list[float]] = {a: [] for a in acts}
+    act_index = {name: idx for name, idx in zip(ACTIVITIES, act_cols)}
+
+    for _location, _done_row, _total_row, percent_row in location_blocks:
+        for act_name in acts:
+            col_idx = act_index.get(act_name)
+            if col_idx is None:
+                continue
+            pct = _parse_percent(df.iloc[percent_row, col_idx])
+            buckets[act_name].append(0.0 if pct is None else pct)
+
+    return {
+        act: (round(sum(vals) / len(vals), 2) if vals else None)
+        for act, vals in buckets.items()
+    }
+
+
 def _average_percent_from_totals(
     total_done: dict[str, float | None],
     overall_total: dict[str, float | None],
@@ -364,12 +393,11 @@ def _average_percent_from_totals(
 ) -> dict[str, float | None]:
     """
     Average % rules:
-    - Trunking / Lay Cable / Termination: mean of location percentages
-      (sum % / number of locations), when location lists are provided.
+    - Trunking / Lay Cable / Termination: mean of location percentages only
+      (sum % / number of locations). Never uses DONE/TOTAL × 100.
     - Other columns: TOTAL DONE / OVERALL TOTAL.
     """
     cols = columns or ACTIVITIES
-    # Back-compat: old callers passed a bare Trunking % list.
     if isinstance(location_percentages, list):
         loc_pcts: dict[str, list[float]] = {"Trunking": location_percentages}
     else:
@@ -377,13 +405,11 @@ def _average_percent_from_totals(
 
     result: dict[str, float | None] = {}
     for act in cols:
-        if act in LOCATION_AVG_ACTIVITIES and loc_pcts.get(act):
-            values = loc_pcts[act]
-            result[act] = round(sum(values) / len(values), 2)
-            continue
-        if act == "Trunking" and loc_pcts.get("Trunking"):
-            values = loc_pcts["Trunking"]
-            result[act] = round(sum(values) / len(values), 2)
+        if act in LOCATION_AVG_ACTIVITIES:
+            values = loc_pcts.get(act) or []
+            result[act] = (
+                round(sum(values) / len(values), 2) if values else None
+            )
             continue
         done = total_done.get(act)
         total = overall_total.get(act)
@@ -623,17 +649,29 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
 
         rows.extend([done_row, total_row, pct_row])
 
-    # Campus summary must match Google Sheet (not re-derived from desa groups).
+    # Campus TOTAL DONE / OVERALL TOTAL from sheet; AVERAGE for
+    # Trunking / Lay Cable / Termination = mean of location % (not done/total).
     sheet_summary = _read_sheet_summary_for_block(
         df, act_cols, location_col, progress_col
     )
+    loc_means = _mean_location_percentages(location_blocks, df, act_cols)
     for label in ("TOTAL DONE", "OVERALL TOTAL", "AVERAGE PERCENTAGE"):
         values = sheet_summary.get(label)
-        if not values:
+        if not values and label != "AVERAGE PERCENTAGE":
             continue
         row = {"Location": label, "Progress": ""}
-        for col in TABLE_COLUMNS:
-            row[col] = values.get(col, "N/A")
+        if label == "AVERAGE PERCENTAGE":
+            # Start from sheet values for other activities, override location-avg ones.
+            base = values or {}
+            for col in TABLE_COLUMNS:
+                if col in LOCATION_AVG_ACTIVITIES:
+                    pct = loc_means.get(col)
+                    row[col] = f"{pct:.2f}%" if pct is not None else "N/A"
+                else:
+                    row[col] = base.get(col, "N/A")
+        else:
+            for col in TABLE_COLUMNS:
+                row[col] = values.get(col, "N/A")
         rows.append(row)
 
     return pd.DataFrame(rows)
@@ -700,6 +738,8 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
 
     _, act_cols = blocks[block_i]
     eq_cols = _equipment_cols(act_cols, len(df.columns))
+    location_blocks = _iter_location_blocks(df, header_idx, location_col, progress_col)
+    loc_means = _mean_location_percentages(location_blocks, df, act_cols)
     rows: list[dict[str, str]] = []
     current_location = ""
 
@@ -731,8 +771,15 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
             "Progress": progress_out,
         }
         for act_name, col_idx in zip(ACTIVITIES, act_cols):
+            # Override AVERAGE PERCENTAGE for Trunking / Lay Cable / Termination.
+            if (
+                loc_upper in {"AVERAGE PERCENTAGE", "AVERAGE PERCENT"}
+                and act_name in LOCATION_AVG_ACTIVITIES
+            ):
+                pct = loc_means.get(act_name)
+                row_data[act_name] = f"{pct:.2f}%" if pct is not None else "N/A"
+                continue
             val = df.iloc[r, col_idx] if col_idx < len(df.columns) else ""
-            # TOTAL DONE / OVERALL TOTAL use Location as the row kind
             kind = loc_upper if is_summary else progress_out
             row_data[act_name] = _display_activity_cell(val, act_name, kind)
         for eq_name, col_idx in zip(ACTIVE_EQUIPMENT, eq_cols):
@@ -779,12 +826,11 @@ def _find_average_percentage_row(
 
 def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Read campus AVERAGE PERCENTAGE values for each date block.
+    Build campus AVERAGE PERCENTAGE series per date block.
 
-    Sheet rules (already computed in Excel):
-    - Trunking average % = average of location Trunking percentages
-    - Other activities = TOTAL DONE / OVERALL TOTAL
-    Empty activity cells remain None (N/A).
+    - Trunking / Lay Cable / Termination = sum(location %) / bilangan lokasi
+      (never DONE/TOTAL × 100)
+    - Other activities = values from sheet AVERAGE PERCENTAGE row
     Also attaches Done/Total counts for fraction metric activities.
     """
     if df is None or df.empty:
@@ -798,10 +844,11 @@ def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
     avg_row_idx = _find_average_percentage_row(df, location_col, progress_col)
     done_row_idx = _find_summary_row(df, location_col, progress_col, {"TOTAL DONE"})
     total_row_idx = _find_summary_row(df, location_col, progress_col, {"OVERALL TOTAL"})
-    if avg_row_idx is None or not blocks:
+    if not blocks:
         return pd.DataFrame()
 
-    avg_row = df.iloc[avg_row_idx]
+    location_blocks = _iter_location_blocks(df, header_idx, location_col, progress_col)
+    avg_row = df.iloc[avg_row_idx] if avg_row_idx is not None else None
     done_row = df.iloc[done_row_idx] if done_row_idx is not None else None
     total_row = df.iloc[total_row_idx] if total_row_idx is not None else None
     records: list[dict] = []
@@ -809,10 +856,14 @@ def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
         if not date_label:
             continue
         record: dict = {"Date": _normalize_date_label(date_label)}
+        loc_means = _mean_location_percentages(location_blocks, df, act_cols)
         for act_name, col_idx in zip(ACTIVITIES, act_cols):
-            record[act_name] = (
-                _parse_percent(avg_row.iloc[col_idx]) if col_idx < len(avg_row) else None
-            )
+            if act_name in LOCATION_AVG_ACTIVITIES:
+                record[act_name] = loc_means.get(act_name)
+            elif avg_row is not None and col_idx < len(avg_row):
+                record[act_name] = _parse_percent(avg_row.iloc[col_idx])
+            else:
+                record[act_name] = None
         for act_name in FRACTION_METRIC_ACTIVITIES:
             try:
                 col_idx = act_cols[ACTIVITIES.index(act_name)]
