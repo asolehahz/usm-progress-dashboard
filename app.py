@@ -199,7 +199,7 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
             if done is not None and total is not None and not (
                 pd.isna(done) or pd.isna(total)
             ):
-                display = f"{int(total)}/{int(done)}"
+                display = f"{int(done)}/{int(total)}"
             else:
                 display = "N/A"
         else:
