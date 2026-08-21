@@ -22,16 +22,21 @@ from config import (
 )
 from lib.auth import admin_login_form
 from lib.data_parser import (
-    aggregate_overall_by_date,
     available_dates,
     campus_date_snapshot,
     get_campus_overall,
     get_induk_desa_overall,
     parse_progress_sheet,
     sheet_overall_percent,
-    _parse_date_key,
 )
-from lib.sheets_client import append_history_row, fetch_all_tabs, fetch_history
+from lib.sheets_client import (
+    append_history_row,
+    append_issue_row,
+    fetch_all_tabs,
+    fetch_history,
+    fetch_issues,
+    update_issue_status,
+)
 
 st.set_page_config(
     page_title="USM Progress Dashboard",
@@ -336,75 +341,119 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
         st.dataframe(snapshot, width="stretch", hide_index=True)
 
 
-def render_overall_data(parsed: dict[str, dict]):
-    st.header("Overall Data by Date")
-    st.caption("Summary percentages from each campus sheet tab, segregated by date.")
+def render_issues():
+    st.header("Issue & Risk")
+    st.caption("Public can view. Only admin can add entries or change Open/Close status.")
 
-    campus_options = ["All campuses (combined)"] + campus_sheet_names()
-    selected = st.selectbox("Campus", campus_options)
+    issues = fetch_issues()
+    tab_view, tab_admin = st.tabs(["View issues", "Admin — manage"])
 
-    if selected == "All campuses (combined)":
-        overall = aggregate_overall_by_date(parsed)
-        locations = []
-        for name in campus_sheet_names():
-            locations.extend(parsed.get(name, {}).get("locations", []))
-    else:
-        data = parsed.get(selected, {})
-        overall = data.get("overall")
-        locations = data.get("locations", [])
+    with tab_view:
+        if issues.empty:
+            st.info(
+                "No issues yet. Admin can add entries here, or create an **Issue & Risk** tab "
+                "in Google Sheets with columns: "
+                "`No | Issue_Risk | Picture_URLs | Action | Status`."
+            )
+        else:
+            status_filter = st.multiselect(
+                "Filter by status",
+                options=["Open", "Close"],
+                default=["Open", "Close"],
+            )
+            display = issues.copy()
+            if "Status" in display.columns and status_filter:
+                display = display[display["Status"].isin(status_filter)]
 
-    if overall is None or overall.empty:
-        st.warning("No summary rows found for this selection.")
-        return
-
-    date_options = sorted(
-        overall["Date"].dropna().astype(str).unique().tolist(),
-        key=_parse_date_key,
-        reverse=True,
-    )
-    selected_date = st.selectbox("Select date", date_options)
-    row = overall[overall["Date"] == selected_date].iloc[0]
-
-    cols = st.columns(4)
-    for i, act in enumerate(ACTIVITIES):
-        val = row.get(act)
-        cols[i % 4].metric(act, f"{val:.1f}%" if val is not None else "—")
-
-    st.subheader("All dates")
-    display = overall.copy()
-    for act in ACTIVITIES:
-        if act in display.columns:
-            display[act] = display[act].apply(lambda x: f"{x:.1f}%" if x is not None else "—")
-    st.dataframe(display, width="stretch", hide_index=True)
-
-    if selected == "All campuses (combined)":
-        st.subheader("Latest % by campus")
-        campus_cols = st.columns(min(3, len(campus_sheet_names())))
-        for i, name in enumerate(campus_sheet_names()):
-            data = parsed.get(name, {})
-            locs = data.get("locations", [])
-            ov = data.get("overall")
-            pct = sheet_overall_percent(locs, ov)
-            icon = CAMPUS_ICONS.get(name, "🏫")
-            campus_cols[i % len(campus_cols)].metric(f"{icon} {name}", f"{pct}%")
-
-    label = selected if selected != "All campuses (combined)" else "all campuses"
-    with st.expander(f"All locations — latest snapshot ({label})"):
-        snap_rows = []
-        for loc in locations:
-            latest = loc.latest_date
-            if not latest:
-                continue
-            snap = {
-                "Location": loc.location,
-                "Campus": loc.sheet_name,
-                "Date": latest,
+            # Normalize column names for display
+            rename = {
+                "No": "No",
+                "Issue_Risk": "Issue / Risk",
+                "Picture_URLs": "Pictures",
+                "Action": "Action",
+                "Status": "Open/Close",
             }
-            for act, val in loc.by_date[latest].items():
-                snap[act] = f"{val:.1f}%" if val is not None else "—"
-            snap_rows.append(snap)
-        if snap_rows:
-            st.dataframe(snap_rows, width="stretch", hide_index=True)
+            show = display.rename(columns={k: v for k, v in rename.items() if k in display.columns})
+            preferred = ["No", "Issue / Risk", "Pictures", "Action", "Open/Close"]
+            cols = [c for c in preferred if c in show.columns]
+            st.dataframe(show[cols] if cols else show, width="stretch", hide_index=True)
+
+            # Show pictures for rows that have URLs
+            pic_col = "Picture_URLs" if "Picture_URLs" in display.columns else None
+            if pic_col:
+                with_pics = display[display[pic_col].astype(str).str.strip() != ""]
+                if not with_pics.empty:
+                    st.subheader("Pictures")
+                    for _, row in with_pics.iterrows():
+                        st.markdown(f"**#{row.get('No', '')} — {row.get('Issue_Risk', '')}**")
+                        urls = str(row.get(pic_col, "")).strip()
+                        for url in [u.strip() for u in urls.split(",") if u.strip()]:
+                            try:
+                                st.image(url, width="stretch")
+                            except Exception:
+                                st.markdown(f"[Image link]({url})")
+
+    with tab_admin:
+        st.warning("Admin only — entries are saved to your Google Sheet.")
+        if not admin_login_form():
+            st.stop()
+
+        st.subheader("Add issue / risk")
+        with st.form("add_issue"):
+            issue_text = st.text_area("Issue / Risk", height=100)
+            action = st.text_area("Action", height=80)
+            status = st.selectbox("Open/Close", ["Open", "Close"])
+            picture_urls = st.text_input(
+                "Picture URLs (optional, comma-separated)",
+                help="Upload to Google Drive, set sharing to Anyone with link, paste URLs here.",
+            )
+            if st.form_submit_button("Save entry"):
+                existing = fetch_issues()
+                next_no = 1
+                if not existing.empty and "No" in existing.columns:
+                    nums = pd.to_numeric(existing["No"], errors="coerce").dropna()
+                    if not nums.empty:
+                        next_no = int(nums.max()) + 1
+                ok = append_issue_row(
+                    {
+                        "No": str(next_no),
+                        "Issue_Risk": issue_text,
+                        "Picture_URLs": picture_urls,
+                        "Action": action,
+                        "Status": status,
+                    }
+                )
+                if ok:
+                    fetch_issues.clear()
+                    st.success(f"Saved as No. {next_no}")
+                    st.rerun()
+                else:
+                    st.error(
+                        "Could not write to sheet. Add a Google service account to Streamlit secrets "
+                        "(see README), or add rows manually in the Issue & Risk tab."
+                    )
+
+        st.subheader("Update Open/Close status")
+        existing = fetch_issues()
+        if existing.empty or "No" not in existing.columns:
+            st.info("No issues to update yet.")
+        else:
+            options = [
+                f"{row.get('No', '')} — {str(row.get('Issue_Risk', ''))[:60]}"
+                for _, row in existing.iterrows()
+            ]
+            with st.form("update_issue_status"):
+                chosen = st.selectbox("Select issue", options)
+                new_status = st.selectbox("New status", ["Open", "Close"], key="issue_status_update")
+                if st.form_submit_button("Update status"):
+                    issue_no = str(chosen).split(" — ", 1)[0].strip()
+                    ok = update_issue_status(issue_no, new_status)
+                    if ok:
+                        fetch_issues.clear()
+                        st.success(f"Issue #{issue_no} set to {new_status}")
+                        st.rerun()
+                    else:
+                        st.error("Could not update status. Check service account access.")
 
 
 def render_history():
@@ -464,7 +513,7 @@ def render_history():
             if st.form_submit_button("Save entry"):
                 ok = append_history_row(
                     {
-                        "Date": date.strftime("%d/%m/%Y"),
+                        "Date": date.strftime("%m/%d/%Y"),
                         "Campus": campus,
                         "Type": entry_type,
                         "Title": title,
@@ -499,12 +548,12 @@ def page_dashboard():
     render_dashboard(_load_or_fail())
 
 
-def page_overall():
-    render_overall_data(_load_or_fail())
-
-
 def page_history():
     render_history()
+
+
+def page_issues():
+    render_issues()
 
 
 def main():
@@ -522,6 +571,7 @@ def main():
     if st.sidebar.button("Refresh data"):
         load_data.clear()
         fetch_history.clear()
+        fetch_issues.clear()
         st.rerun()
 
     nav = st.navigation(
@@ -531,7 +581,7 @@ def main():
             ],
             "Check Daily Data": list(CAMPUS_PAGES.values()),
             "More": [
-                st.Page(page_overall, title="Overall Data", icon="📈"),
+                st.Page(page_issues, title="Issue & Risk", icon="⚠️", url_path="issue-risk"),
                 st.Page(page_history, title="Daily History", icon="🗂️"),
             ],
         },

@@ -53,6 +53,10 @@ HISTORY_TAB_NAME = "Daily History"
 HISTORY_GID = ""
 HISTORY_COLUMNS = ["Date", "Campus", "Type", "Title", "Description", "Image_URLs"]
 
+ISSUES_TAB_NAME = "Issue & Risk"
+ISSUES_GID = ""
+ISSUES_COLUMNS = ["No", "Issue_Risk", "Picture_URLs", "Action", "Status"]
+
 CACHE_TTL_SECONDS = 300
 
 # INDUK-only: locations rolled up into these desa groups.

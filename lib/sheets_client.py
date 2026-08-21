@@ -12,6 +12,9 @@ from config import (
     HISTORY_COLUMNS,
     HISTORY_GID,
     HISTORY_TAB_NAME,
+    ISSUES_COLUMNS,
+    ISSUES_GID,
+    ISSUES_TAB_NAME,
     SHEET_ID,
     SHEET_TABS,
 )
@@ -112,3 +115,99 @@ def append_history_row(row: dict[str, Any]) -> bool:
     fetch_csv.clear()
     fetch_history.clear()
     return True
+
+
+def _parse_named_df(raw: pd.DataFrame, columns: list[str], first_header: str) -> pd.DataFrame:
+    if raw.empty:
+        return pd.DataFrame(columns=columns)
+    header = [str(c).strip() for c in raw.iloc[0]]
+    if header and header[0].lower() != first_header.lower() and first_header not in header:
+        raw.columns = columns[: len(raw.columns)]
+        return raw
+    body = raw.iloc[1:].copy()
+    body.columns = header[: len(body.columns)]
+    # Keep only known columns when present
+    for col in columns:
+        if col not in body.columns:
+            body[col] = ""
+    return body[columns].reset_index(drop=True)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_issues() -> pd.DataFrame:
+    """Load Issue & Risk tab; empty frame with expected columns if missing."""
+    if ISSUES_GID:
+        try:
+            return _parse_named_df(fetch_csv(ISSUES_GID), ISSUES_COLUMNS, "No")
+        except Exception:
+            pass
+
+    client = _get_gspread_client()
+    if client:
+        try:
+            spreadsheet = client.open_by_key(SHEET_ID)
+            worksheet = spreadsheet.worksheet(ISSUES_TAB_NAME)
+            return _parse_named_df(
+                pd.DataFrame(worksheet.get_all_values()), ISSUES_COLUMNS, "No"
+            )
+        except Exception:
+            pass
+
+    return pd.DataFrame(columns=ISSUES_COLUMNS)
+
+
+def append_issue_row(row: dict[str, Any]) -> bool:
+    """Append a row to Issue & Risk sheet. Requires service account in secrets."""
+    client = _get_gspread_client()
+    if not client:
+        return False
+
+    spreadsheet = client.open_by_key(SHEET_ID)
+    try:
+        worksheet = spreadsheet.worksheet(ISSUES_TAB_NAME)
+    except Exception:
+        worksheet = spreadsheet.add_worksheet(
+            title=ISSUES_TAB_NAME,
+            rows=1000,
+            cols=len(ISSUES_COLUMNS),
+        )
+        worksheet.append_row(ISSUES_COLUMNS)
+
+    values = [str(row.get(col, "")) for col in ISSUES_COLUMNS]
+    worksheet.append_row(values)
+    fetch_csv.clear()
+    fetch_issues.clear()
+    return True
+
+
+def update_issue_status(issue_no: str, status: str) -> bool:
+    """Update Status for a matching No value. Requires service account."""
+    client = _get_gspread_client()
+    if not client:
+        return False
+
+    try:
+        spreadsheet = client.open_by_key(SHEET_ID)
+        worksheet = spreadsheet.worksheet(ISSUES_TAB_NAME)
+    except Exception:
+        return False
+
+    rows = worksheet.get_all_values()
+    if not rows:
+        return False
+
+    header = [str(c).strip() for c in rows[0]]
+    try:
+        no_idx = header.index("No")
+        status_idx = header.index("Status")
+    except ValueError:
+        return False
+
+    target = str(issue_no).strip()
+    for i, row in enumerate(rows[1:], start=2):
+        if len(row) > no_idx and str(row[no_idx]).strip() == target:
+            worksheet.update_cell(i, status_idx + 1, status)
+            fetch_csv.clear()
+            fetch_issues.clear()
+            return True
+    return False
