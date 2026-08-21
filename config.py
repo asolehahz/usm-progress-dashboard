@@ -69,6 +69,12 @@ LOCATION_AVG_ACTIVITIES = [
     "Termination",
 ]
 
+# Per-location DONE is derived as % × TOTAL (sheet DONE often blank/0).
+PCT_DERIVED_DONE_ACTIVITIES = [
+    "Lay Cable",
+    "Termination",
+]
+
 ACTIVE_EQUIPMENT = [
     "Controller",
     "Access Switch",
