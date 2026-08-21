@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
 
 from config import (
     ACTIVITIES,
@@ -37,6 +38,18 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+CHART_COLORS = [
+    "#4B2876",
+    "#F7941D",
+    "#0077B6",
+    "#2A9D8F",
+    "#E63946",
+    "#6A994E",
+    "#C77DFF",
+    "#BC6C25",
+]
+ACTIVITY_COLORS = {name: CHART_COLORS[i] for i, name in enumerate(ACTIVITIES)}
 
 st.markdown(
     """
@@ -164,7 +177,7 @@ def load_data() -> dict[str, dict]:
 
 
 def render_activity_average_panel(overall: pd.DataFrame, title: str):
-    """Show latest-date average % only (metric boxes, no historical chart)."""
+    """Latest % metric boxes + daily trend line chart for all activities."""
     if overall is None or overall.empty:
         st.warning("No average percentage data found for this selection.")
         return
@@ -177,6 +190,39 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
         val = latest.get(act)
         display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
         metric_cols[i % 4].metric(act, display)
+
+    date_order = overall["Date"].tolist()
+    fig = go.Figure()
+    for i, act in enumerate(ACTIVITIES):
+        if act in overall.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=overall["Date"],
+                    y=overall[act],
+                    mode="lines+markers",
+                    name=act,
+                    line=dict(
+                        color=ACTIVITY_COLORS.get(act, CHART_COLORS[i % len(CHART_COLORS)]),
+                        width=2,
+                    ),
+                    marker=dict(size=6),
+                    connectgaps=False,
+                )
+            )
+    fig.update_layout(
+        height=420,
+        xaxis_title="Date",
+        yaxis_title="Progress (%)",
+        yaxis_range=[0, 105],
+        xaxis=dict(categoryorder="array", categoryarray=date_order, type="category"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        margin=dict(l=40, r=20, t=40, b=40),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FAFAFA",
+        font=dict(color="#4B2876"),
+        colorway=CHART_COLORS,
+    )
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_dashboard(parsed: dict[str, dict]):
