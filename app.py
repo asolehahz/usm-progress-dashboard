@@ -178,52 +178,23 @@ def load_data() -> dict[str, dict]:
 
 
 def render_activity_average_panel(overall: pd.DataFrame, title: str, caption: str = ""):
-    """Metric boxes + multi-line chart from AVERAGE PERCENTAGE data."""
+    """Show latest-date average % only (metric boxes, no historical chart)."""
     if overall is None or overall.empty:
         st.warning("No average percentage data found for this selection.")
         return
 
     latest = overall.iloc[-1]
+    latest_date = latest.get("Date", "—")
     st.subheader(title)
     if caption:
         st.caption(caption)
-    st.caption(f"Latest summary date: **{latest.get('Date', '—')}**")
+    st.caption(f"Showing **latest data only** — date: **{latest_date}**")
 
     metric_cols = st.columns(4)
     for i, act in enumerate(ACTIVITIES):
         val = latest.get(act)
         display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
         metric_cols[i % 4].metric(act, display)
-
-    date_order = overall["Date"].tolist()
-    fig = go.Figure()
-    for i, act in enumerate(ACTIVITIES):
-        if act in overall.columns:
-            fig.add_trace(
-                go.Scatter(
-                    x=overall["Date"],
-                    y=overall[act],
-                    mode="lines+markers",
-                    name=act,
-                    line=dict(color=ACTIVITY_COLORS.get(act, CHART_COLORS[i % len(CHART_COLORS)]), width=2),
-                    marker=dict(size=6),
-                    connectgaps=False,
-                )
-            )
-    fig.update_layout(
-        height=420,
-        xaxis_title="Date",
-        yaxis_title="Progress (%)",
-        yaxis_range=[0, 105],
-        xaxis=dict(categoryorder="array", categoryarray=date_order, type="category"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        margin=dict(l=40, r=20, t=40, b=40),
-        paper_bgcolor="#FFFFFF",
-        plot_bgcolor="#FAFAFA",
-        font=dict(color="#4B2876"),
-        colorway=CHART_COLORS,
-    )
-    st.plotly_chart(fig, width="stretch")
 
 
 def render_dashboard(parsed: dict[str, dict]):
@@ -241,8 +212,8 @@ def render_dashboard(parsed: dict[str, dict]):
         overall = get_induk_desa_overall(raw_df, desa) if raw_df is not None else pd.DataFrame()
         render_activity_average_panel(
             overall,
-            title=f"🏛️ Desa average % by date — {desa}",
-            caption="Grouped from INDUK DONE/TOTAL by date (same desa groups as INDUK(DESA)).",
+            title=f"🏛️ Desa average % — {desa}",
+            caption="Latest grouped % from INDUK (same desa groups as INDUK(DESA)).",
         )
         return
 
@@ -255,8 +226,8 @@ def render_dashboard(parsed: dict[str, dict]):
     )
     render_activity_average_panel(
         overall,
-        title=f"{icon} Campus average % by date — {campus}",
-        caption=f"From sheet AVERAGE PERCENTAGE / grouped totals.{extra}",
+        title=f"{icon} Campus average % — {campus}",
+        caption=f"Latest AVERAGE PERCENTAGE from the sheet.{extra}",
     )
 
 
