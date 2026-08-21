@@ -14,7 +14,6 @@ import plotly.graph_objects as go
 from config import (
     ACTIVITIES,
     CAMPUS_ICONS,
-    INDUK_LOCATION_GROUPS,
     SHEET_ID,
     campus_sheet_names,
     dashboard_select_options,
@@ -27,7 +26,6 @@ from lib.data_parser import (
     get_campus_overall,
     get_induk_desa_overall,
     parse_progress_sheet,
-    sheet_overall_percent,
 )
 from lib.sheets_client import (
     append_history_row,
@@ -293,35 +291,13 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
         campus = st.session_state.get("selected_campus", campus_names[0])
     st.session_state["selected_campus"] = campus
     st.header(f"Check Daily Data — {campus}")
-    st.caption(
-        "Excel-style view for one date: DONE, TOTAL, PERCENTAGE (including Active Equipment: "
-        "Controller, Access Switch, Dist. Switch), plus TOTAL DONE / OVERALL TOTAL / "
-        "AVERAGE PERCENTAGE. Empty cells show as N/A."
-        + (
-            " INDUK locations are grouped by desa before totals and percentages are calculated."
-            if campus == "INDUK"
-            else ""
-        )
-    )
 
     data = parsed.get(campus, {})
-    locations = data.get("locations", [])
-    overall = data.get("overall")
     raw_df = data.get("raw_df")
 
     if raw_df is None or getattr(raw_df, "empty", True):
         st.info(f"No sheet data loaded for **{campus}**.")
         return
-
-    icon = CAMPUS_ICONS.get(campus, "🏫")
-    overall_df = overall if overall is not None else pd.DataFrame()
-    avg = sheet_overall_percent(locations, overall_df)
-    loc_count = len(INDUK_LOCATION_GROUPS) if campus == "INDUK" else len(locations)
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric(f"{icon} Campus", campus)
-    c2.metric("Latest average %", f"{avg:.1f}%")
-    c3.metric("Locations tracked", loc_count)
 
     daily_dates = available_dates(raw_df)
     if not daily_dates:
