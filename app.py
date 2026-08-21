@@ -29,6 +29,7 @@ from lib.data_parser import (
     get_induk_desa_overall,
     parse_progress_sheet,
     sheet_overall_percent,
+    _parse_date_key,
 )
 from lib.sheets_client import append_history_row, fetch_all_tabs, fetch_history
 
@@ -211,12 +212,17 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
             )
     fig.update_layout(
         height=420,
-        xaxis_title="Date",
+        xaxis_title="Date (mm/dd/yyyy)",
         yaxis_title="Progress (%)",
         yaxis_range=[0, 105],
-        xaxis=dict(categoryorder="array", categoryarray=date_order, type="category"),
+        xaxis=dict(
+            categoryorder="array",
+            categoryarray=date_order,
+            type="category",
+            tickangle=-30,
+        ),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        margin=dict(l=40, r=20, t=40, b=40),
+        margin=dict(l=40, r=20, t=40, b=60),
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FAFAFA",
         font=dict(color="#4B2876"),
@@ -319,7 +325,7 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
 
     selected_date = st.selectbox(
         "Select date",
-        options=daily_dates[::-1],
+        options=daily_dates,
         key=f"daily_date_{campus}",
     )
     snapshot = campus_date_snapshot(raw_df, selected_date, campus=campus)
@@ -351,7 +357,12 @@ def render_overall_data(parsed: dict[str, dict]):
         st.warning("No summary rows found for this selection.")
         return
 
-    selected_date = st.selectbox("Select date", overall["Date"].tolist()[::-1])
+    date_options = sorted(
+        overall["Date"].dropna().astype(str).unique().tolist(),
+        key=_parse_date_key,
+        reverse=True,
+    )
+    selected_date = st.selectbox("Select date", date_options)
     row = overall[overall["Date"] == selected_date].iloc[0]
 
     cols = st.columns(4)

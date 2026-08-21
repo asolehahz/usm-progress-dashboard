@@ -88,12 +88,12 @@ def _parse_date_key(date_str: str):
 
 
 def _normalize_date_label(date_str: str) -> str:
-    """Display all dates as D/M/YYYY for consistent chart labels."""
+    """Display all dates as mm/dd/yyyy for consistent chart and dropdown labels."""
     parts = _parse_date_parts(date_str)
     if not parts:
         return str(date_str).strip()
     y, m, d = parts
-    return f"{d}/{m}/{y}"
+    return f"{m:02d}/{d:02d}/{y}"
 
 
 def _looks_like_date(value) -> bool:
@@ -246,8 +246,8 @@ def parse_progress_sheet(
     return locations, overall
 
 
-def available_dates(df: pd.DataFrame) -> list[str]:
-    """Extract all detected date blocks from one campus sheet (public API)."""
+def available_dates(df: pd.DataFrame, *, newest_first: bool = True) -> list[str]:
+    """Extract date blocks as mm/dd/yyyy, sorted chronologically (newest first by default)."""
     if df is None or df.empty:
         return []
     header_idx = _detect_header_row_index(df)
@@ -255,7 +255,9 @@ def available_dates(df: pd.DataFrame) -> list[str]:
     blocks = _find_date_blocks(header_row)
     dates = _extract_dates_for_blocks(df, blocks)
     clean = [d for d in dates if d]
-    return sorted(list(dict.fromkeys(clean)), key=_parse_date_key)
+    unique = list(dict.fromkeys(clean))
+    ordered = sorted(unique, key=_parse_date_key)
+    return list(reversed(ordered)) if newest_first else ordered
 
 
 def _parse_number(value) -> float | None:
