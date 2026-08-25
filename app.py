@@ -182,6 +182,45 @@ def load_data() -> dict[str, dict]:
     return parsed
 
 
+def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str]:
+    """
+    Compare latest vs previous date for one activity.
+    Returns (delta_text_for_st.metric, caption_change_detail).
+    """
+    if overall is None or len(overall) < 2:
+        return None, "No previous date to compare"
+
+    latest = overall.iloc[-1]
+    prev = overall.iloc[-2]
+    latest_date = str(latest.get("Date", ""))
+    prev_date = str(prev.get("Date", ""))
+
+    if act in FRACTION_METRIC_ACTIVITIES:
+        d0 = prev.get(f"{act}__done")
+        d1 = latest.get(f"{act}__done")
+        t0 = prev.get(f"{act}__total")
+        t1 = latest.get(f"{act}__total")
+        if any(v is None or (isinstance(v, float) and pd.isna(v)) for v in (d0, d1, t0, t1)):
+            return None, f"vs {prev_date} → {latest_date}: N/A"
+        d0, d1, t0, t1 = int(d0), int(d1), int(t0), int(t1)
+        delta_done = d1 - d0
+        sign = "+" if delta_done > 0 else ""
+        detail = f"vs {prev_date} → {latest_date}: {d0}/{t0} → {d1}/{t1} ({sign}{delta_done} done)"
+        # st.metric delta: show change in done count
+        delta = f"{sign}{delta_done}" if delta_done != 0 else "0"
+        return delta, detail
+
+    v0 = prev.get(act)
+    v1 = latest.get(act)
+    if v0 is None or v1 is None or pd.isna(v0) or pd.isna(v1):
+        return None, f"vs {prev_date} → {latest_date}: N/A"
+    diff = float(v1) - float(v0)
+    sign = "+" if diff > 0 else ""
+    delta = f"{sign}{diff:.1f}%"
+    detail = f"vs {prev_date} → {latest_date}: {float(v0):.1f}% → {float(v1):.1f}% ({sign}{diff:.1f} pp)"
+    return delta, detail
+
+
 def render_activity_average_panel(overall: pd.DataFrame, title: str):
     """Latest % metric boxes + line chart for UTP Point, AP Mounting, Fiber Optic."""
     if overall is None or overall.empty:
@@ -189,7 +228,15 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
         return
 
     latest = overall.iloc[-1]
+    latest_date = str(latest.get("Date", ""))
+    prev_date = str(overall.iloc[-2].get("Date", "")) if len(overall) >= 2 else None
     st.subheader(title)
+    if prev_date:
+        st.caption(
+            f"Change notes compare **{latest_date}** with previous date **{prev_date}**."
+        )
+    else:
+        st.caption(f"Latest date: **{latest_date}** (no previous date yet).")
 
     metric_cols = st.columns(4)
     for i, act in enumerate(ACTIVITIES):
@@ -205,7 +252,11 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
         else:
             val = latest.get(act)
             display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
-        metric_cols[i % 4].metric(act, display)
+
+        delta, detail = _metric_delta_note(overall, act)
+        with metric_cols[i % 4]:
+            st.metric(act, display, delta=delta)
+            st.caption(detail)
 
     date_order = overall["Date"].tolist()
     fig = go.Figure()
