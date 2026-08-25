@@ -853,11 +853,10 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
     """
     Excel-like snapshot for one campus date block.
 
-    INDUK uses grouped locations. Other campuses show raw sheet rows.
+    All campuses (including INDUK) show per-location rows for the selected date.
+    INDUK desa accumulation is used on the Dashboard only, not here.
+    DONE for Trunking / Lay Cable / Termination / Fiber is derived where needed.
     """
-    if campus == "INDUK":
-        return _induk_grouped_snapshot(df, date_str)
-
     if df is None or df.empty:
         return pd.DataFrame()
 
