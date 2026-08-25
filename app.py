@@ -16,7 +16,6 @@ from config import (
     CAMPUS_ICONS,
     DASHBOARD_CHART_ACTIVITIES,
     FRACTION_METRIC_ACTIVITIES,
-    SHEET_ID,
     campus_sheet_names,
     dashboard_select_options,
     parse_dashboard_selection,
@@ -683,7 +682,6 @@ def main():
         """,
         unsafe_allow_html=True,
     )
-    st.sidebar.markdown(f"[Open Google Sheet ↗](https://docs.google.com/spreadsheets/d/{SHEET_ID})")
 
     if st.sidebar.button("Refresh data"):
         load_data.clear()
