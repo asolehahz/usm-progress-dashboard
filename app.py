@@ -173,7 +173,7 @@ st.markdown(
 )
 
 
-@st.cache_data(ttl=300, show_spinner="Loading data from Google Sheets…")
+@st.cache_data(ttl=300, show_spinner="Loading data…")
 def load_data() -> dict[str, dict]:
     """Load and parse every tab defined in config.SHEET_TABS."""
     tabs = fetch_all_tabs()
@@ -658,10 +658,7 @@ def _load_or_fail() -> dict[str, dict]:
     try:
         return load_data()
     except Exception as exc:
-        st.error(
-            "Could not load Google Sheet. Make sure the sheet is shared as "
-            "**Anyone with the link → Viewer**."
-        )
+        st.error("Could not load data. Please try Refresh, or try again later.")
         st.exception(exc)
         st.stop()
 
