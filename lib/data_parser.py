@@ -923,6 +923,85 @@ def location_change_summary(
     return pd.DataFrame(rows)
 
 
+def location_changes_by_building(
+    df: pd.DataFrame, prev_date: str, latest_date: str
+) -> dict[str, dict[str, str]]:
+    """
+    building code (K05, H06, …) → {activity: 'prev→latest (↑N)'} for INDUK progress.
+    """
+    if df is None or df.empty or not prev_date or not latest_date:
+        return {}
+
+    header_idx = _detect_header_row_index(df)
+    header_row = df.iloc[header_idx]
+    location_col, progress_col = _detect_location_progress_cols(header_row)
+    blocks = _find_date_blocks(header_row)
+    block_dates = _extract_dates_for_blocks(df, blocks)
+    location_blocks = _iter_location_blocks(df, header_idx, location_col, progress_col)
+
+    prev_norm = _normalize_date_label(prev_date)
+    latest_norm = _normalize_date_label(latest_date)
+
+    def _find_cols(target: str) -> list[int] | None:
+        for date_label, (_, act_cols) in zip(block_dates, blocks):
+            if date_label == target or _normalize_date_label(date_label) == target:
+                return act_cols
+        return None
+
+    prev_cols = _find_cols(prev_norm) or _find_cols(prev_date)
+    latest_cols = _find_cols(latest_norm) or _find_cols(latest_date)
+    if not prev_cols or not latest_cols:
+        return {}
+
+    prev_pct = _location_percent_for_date_block(df, location_blocks, prev_cols)
+    latest_pct = _location_percent_for_date_block(df, location_blocks, latest_cols)
+    prev_done = _location_done_counts_for_date_block(
+        df, location_blocks, prev_cols, list(FRACTION_METRIC_ACTIVITIES)
+    )
+    latest_done = _location_done_counts_for_date_block(
+        df, location_blocks, latest_cols, list(FRACTION_METRIC_ACTIVITIES)
+    )
+
+    locations = sorted(
+        set(prev_pct) | set(latest_pct) | set(prev_done) | set(latest_done),
+        key=lambda s: s.upper(),
+    )
+    lookup: dict[str, dict[str, str]] = {}
+
+    for location in locations:
+        code = _building_short_label(location).upper()
+        if not code:
+            continue
+        for act in ACTIVITIES:
+            if act in FRACTION_METRIC_ACTIVITIES:
+                v0 = prev_done.get(location, {}).get(act)
+                v1 = latest_done.get(location, {}).get(act)
+                if v0 is None or v1 is None:
+                    continue
+                diff = float(v1) - float(v0)
+                if abs(diff) < 1e-9:
+                    continue
+                arrow = "↑" if diff > 0 else "↓"
+                prev_s, latest_s = str(int(round(v0))), str(int(round(v1)))
+                change = f"{arrow} {abs(int(round(diff)))}"
+            else:
+                v0 = prev_pct.get(location, {}).get(act)
+                v1 = latest_pct.get(location, {}).get(act)
+                if v0 is None or v1 is None:
+                    continue
+                diff = float(v1) - float(v0)
+                if abs(diff) < 1e-9:
+                    continue
+                arrow = "↑" if diff > 0 else "↓"
+                prev_s, latest_s = f"{v0:.0f}%", f"{v1:.0f}%"
+                change = f"{arrow} {abs(diff):.0f}%"
+            lookup.setdefault(code, {})[act] = (
+                f"{act} {prev_s}→{latest_s} ({change})"
+            )
+
+    return lookup
+
+
 def _read_sheet_summary_for_block(
     df: pd.DataFrame,
     act_cols: list[int],
@@ -1295,6 +1374,7 @@ __all__ = [
     "get_induk_desa_overall",
     "induk_desa_building_increases",
     "location_change_summary",
+    "location_changes_by_building",
     "parse_progress_sheet",
     "sheet_overall_percent",
     "campus_sheets_summary",

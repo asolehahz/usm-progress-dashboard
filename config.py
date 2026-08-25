@@ -112,6 +112,16 @@ ISSUES_TAB_NAME = "Issue & Risk"
 ISSUES_GID = ""
 ISSUES_COLUMNS = ["No", "Issue_Risk", "Picture_URLs", "Action", "Status"]
 
+WORK_PLAN_TAB_NAME = "Work Plan VS Actual"
+WORK_PLAN_GID = "1480410166"
+WORK_PLAN_COLUMNS = [
+    "Date",
+    "Duration",
+    "Location",
+    "Type_of_work",
+    "Reported_changes",
+]
+
 CACHE_TTL_SECONDS = 300
 
 # INDUK-only: locations rolled up into these desa groups.

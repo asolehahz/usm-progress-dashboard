@@ -17,6 +17,9 @@ from config import (
     ISSUES_TAB_NAME,
     SHEET_ID,
     SHEET_TABS,
+    WORK_PLAN_COLUMNS,
+    WORK_PLAN_GID,
+    WORK_PLAN_TAB_NAME,
 )
 
 
@@ -154,6 +157,33 @@ def fetch_issues() -> pd.DataFrame:
             pass
 
     return pd.DataFrame(columns=ISSUES_COLUMNS)
+
+
+def _parse_work_plan_df(raw: pd.DataFrame) -> pd.DataFrame:
+    from lib.work_plan import parse_work_plan
+
+    return parse_work_plan(raw)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_work_plan() -> pd.DataFrame:
+    """Load Work Plan VS Actual tab."""
+    if WORK_PLAN_GID:
+        try:
+            return _parse_work_plan_df(fetch_csv(WORK_PLAN_GID))
+        except Exception:
+            pass
+
+    client = _get_gspread_client()
+    if client:
+        try:
+            spreadsheet = client.open_by_key(SHEET_ID)
+            worksheet = spreadsheet.worksheet(WORK_PLAN_TAB_NAME)
+            return _parse_work_plan_df(pd.DataFrame(worksheet.get_all_values()))
+        except Exception:
+            pass
+
+    return pd.DataFrame(columns=WORK_PLAN_COLUMNS)
 
 
 def append_issue_row(row: dict[str, Any]) -> bool:

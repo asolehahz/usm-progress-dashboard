@@ -38,8 +38,10 @@ from lib.sheets_client import (
     fetch_all_tabs,
     fetch_history,
     fetch_issues,
+    fetch_work_plan,
     update_issue_status,
 )
+from lib.work_plan import build_work_plan_view, work_plan_dates
 
 st.set_page_config(
     page_title="USM Progress Dashboard",
@@ -463,6 +465,40 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
         st.dataframe(display, width="stretch", hide_index=True)
 
 
+def render_work_plan_vs_actual(parsed: dict[str, dict]):
+    st.header("Work Plan vs Actual")
+    st.caption("Daily work plan compared with reported progress changes.")
+
+    plan = fetch_work_plan()
+    dates = work_plan_dates(plan)
+    if not dates:
+        st.info("No work plan entries found yet.")
+        return
+
+    selected_date = st.selectbox(
+        "Select date",
+        options=dates,
+        key="work_plan_date",
+    )
+
+    induk_df = parsed.get("INDUK", {}).get("raw_df")
+    table, prev_date = build_work_plan_view(plan, induk_df, selected_date)
+
+    if prev_date:
+        st.caption(
+            f"Reported changes compare progress on **{selected_date}** "
+            f"vs **{prev_date}**."
+        )
+    else:
+        st.caption(f"Work plan for **{selected_date}**.")
+
+    if table.empty:
+        st.info("No plan rows for this date.")
+        return
+
+    st.dataframe(table, width="stretch", hide_index=True)
+
+
 def render_issues():
     st.header("Issue & Risk")
     st.caption("Public can view. Only admin can add entries or change Open/Close status.")
@@ -671,6 +707,10 @@ def page_history():
     render_history()
 
 
+def page_work_plan():
+    render_work_plan_vs_actual(_load_or_fail())
+
+
 def page_issues():
     render_issues()
 
@@ -690,12 +730,19 @@ def main():
         load_data.clear()
         fetch_history.clear()
         fetch_issues.clear()
+        fetch_work_plan.clear()
         st.rerun()
 
     nav = st.navigation(
         {
             "Overview": [
                 st.Page(page_dashboard, title="Dashboard", icon="📊", default=True),
+                st.Page(
+                    page_work_plan,
+                    title="Work Plan vs Actual",
+                    icon="📋",
+                    url_path="work-plan",
+                ),
             ],
             "Check Daily Data": list(CAMPUS_PAGES.values()),
             # Temporarily hidden — restore Issue & Risk / Daily History here when needed.
