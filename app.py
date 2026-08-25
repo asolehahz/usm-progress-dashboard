@@ -187,6 +187,7 @@ def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str
     Option B: metric + delta pill; caption only when there is a change.
     Fractions: caption shows how much DONE increased (e.g. +20 done since 08/23).
     Percent activities: caption like +1.5% since 08/23.
+    Zero change → no delta pill (keeps card heights even).
     """
     if overall is None or len(overall) < 2:
         return None, None
@@ -204,10 +205,9 @@ def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str
             return None, None
         d0, d1 = int(d0), int(d1)
         delta_done = d1 - d0
-        delta = f"{delta_done:+d}" if delta_done != 0 else "0"
         if delta_done == 0:
-            return delta, None
-        # Show increase amount clearly for fraction metrics
+            return None, None
+        delta = f"{delta_done:+d}"
         caption = f"{delta_done:+d} done since {prev_date} ({d0} → {d1})"
         return delta, caption
 
@@ -216,9 +216,9 @@ def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str
     if v0 is None or v1 is None or pd.isna(v0) or pd.isna(v1):
         return None, None
     diff = float(v1) - float(v0)
-    delta = f"{diff:+.1f}%"
     if abs(diff) < 1e-9:
-        return delta, None
+        return None, None
+    delta = f"{diff:+.1f}%"
     caption = f"{diff:+.1f}% since {prev_date}"
     return delta, caption
 
@@ -232,26 +232,32 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
     latest = overall.iloc[-1]
     st.subheader(title)
 
-    metric_cols = st.columns(len(ACTIVITIES))
-    for i, act in enumerate(ACTIVITIES):
-        if act in FRACTION_METRIC_ACTIVITIES:
-            done = latest.get(f"{act}__done")
-            total = latest.get(f"{act}__total")
-            if done is not None and total is not None and not (
-                pd.isna(done) or pd.isna(total)
-            ):
-                display = f"{int(done)}/{int(total)}"
+    # Two fixed rows of 4 so cards stay aligned (equal structure per cell).
+    for row_start in (0, 4):
+        metric_cols = st.columns(4)
+        for j in range(4):
+            i = row_start + j
+            if i >= len(ACTIVITIES):
+                break
+            act = ACTIVITIES[i]
+            if act in FRACTION_METRIC_ACTIVITIES:
+                done = latest.get(f"{act}__done")
+                total = latest.get(f"{act}__total")
+                if done is not None and total is not None and not (
+                    pd.isna(done) or pd.isna(total)
+                ):
+                    display = f"{int(done)}/{int(total)}"
+                else:
+                    display = "N/A"
             else:
-                display = "N/A"
-        else:
-            val = latest.get(act)
-            display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
+                val = latest.get(act)
+                display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
 
-        delta, detail = _metric_delta_note(overall, act)
-        with metric_cols[i]:
-            st.metric(act, display, delta=delta)
-            if detail:
-                st.caption(detail)
+            delta, detail = _metric_delta_note(overall, act)
+            with metric_cols[j]:
+                st.metric(act, display, delta=delta)
+                # Always reserve caption space so columns stay level.
+                st.caption(detail if detail else "\u00a0")
 
     date_order = overall["Date"].tolist()
     fig = go.Figure()
