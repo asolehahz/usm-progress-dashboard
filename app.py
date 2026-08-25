@@ -28,6 +28,7 @@ from lib.data_parser import (
     get_campus_overall,
     get_induk_desa_overall,
     induk_desa_building_increases,
+    induk_grouped_snapshot,
     parse_progress_sheet,
 )
 from lib.sheets_client import (
@@ -397,7 +398,25 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
         options=daily_dates,
         key=f"daily_date_{campus}",
     )
-    snapshot = campus_date_snapshot(raw_df, selected_date, campus=campus)
+
+    if campus == "INDUK":
+        view_mode = st.radio(
+            "Table view",
+            options=["Accumulated (desa groups)", "Full (per location)"],
+            horizontal=True,
+            key=f"daily_view_{campus}",
+            help=(
+                "Accumulated rolls locations into the 7 desa groups. "
+                "Full shows every building location."
+            ),
+        )
+        if view_mode.startswith("Accumulated"):
+            snapshot = induk_grouped_snapshot(raw_df, selected_date)
+        else:
+            snapshot = campus_date_snapshot(raw_df, selected_date, campus=campus)
+    else:
+        snapshot = campus_date_snapshot(raw_df, selected_date, campus=campus)
+
     st.subheader(f"Sheet data for {selected_date}")
     if snapshot.empty:
         st.info("No DONE/TOTAL/PERCENTAGE rows found for this date.")

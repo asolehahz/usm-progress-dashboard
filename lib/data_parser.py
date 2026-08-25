@@ -816,7 +816,16 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
         for col in TABLE_COLUMNS:
             done_row[col] = _display_activity_cell(done_map.get(col), col, "DONE")
             total_row[col] = _display_activity_cell(total_map.get(col), col, "TOTAL")
-            pct_val = averages.get(col)
+            if col in LOCATION_MEAN_PCT_ACTIVITIES:
+                pct_val = _mean_location_percent(
+                    location_blocks,
+                    df,
+                    act_cols,
+                    col,
+                    group_filter=group_name,
+                )
+            else:
+                pct_val = averages.get(col)
             pct_row[col] = f"{pct_val:.2f}%" if pct_val is not None else "N/A"
 
         rows.extend([done_row, total_row, pct_row])
@@ -866,6 +875,10 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
         rows.append(row)
 
     return pd.DataFrame(rows)
+
+
+# Public alias for Check Daily Data (INDUK accumulated view).
+induk_grouped_snapshot = _induk_grouped_snapshot
 
 
 def get_campus_overall(df: pd.DataFrame, campus: str) -> pd.DataFrame:
@@ -998,6 +1011,7 @@ __all__ = [
     "LocationProgress",
     "available_dates",
     "campus_date_snapshot",
+    "induk_grouped_snapshot",
     "get_campus_overall",
     "get_induk_desa_overall",
     "induk_desa_building_increases",
