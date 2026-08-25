@@ -155,7 +155,7 @@ def build_work_plan_view(
     Returns (display_table, previous_date_used).
     """
     empty = pd.DataFrame(
-        columns=["Duration", "Location", "Type of work", "Reported changes"]
+        columns=["#", "Duration", "Location", "Type of work", "Reported changes"]
     )
     if plan is None or plan.empty or not selected_date:
         return empty, None
@@ -215,4 +215,8 @@ def build_work_plan_view(
             }
         )
 
-    return pd.DataFrame(out_rows), prev_date
+    result = pd.DataFrame(out_rows)
+    if not result.empty:
+        result.insert(0, "#", range(1, len(result) + 1))
+
+    return result, prev_date
