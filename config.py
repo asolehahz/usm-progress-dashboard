@@ -53,6 +53,12 @@ FRACTION_METRIC_ACTIVITIES = [
     "AP Mounting",
 ]
 
+# % = DONE / TOTAL (INDUK groups + campus average).
+DONE_TOTAL_PCT_ACTIVITIES = [
+    "UTP Point",
+    "AP Mounting",
+]
+
 # DONE / TOTAL counts (whole numbers, not decimals).
 COUNTABLE_ACTIVITIES = [
     "Trunking",
@@ -62,11 +68,12 @@ COUNTABLE_ACTIVITIES = [
     "AP Mounting",
 ]
 
-# INDUK desa Average % = mean of location percentages (not done/total).
+# INDUK exception Average % = mean of location percentages (not done/total).
 LOCATION_AVG_ACTIVITIES = [
     "Trunking",
     "Lay Cable",
     "Termination",
+    "Fiber Optic",
 ]
 
 # Per-location DONE is derived as % × TOTAL (sheet DONE often blank/0).
