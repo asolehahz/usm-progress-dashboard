@@ -53,11 +53,28 @@ FRACTION_METRIC_ACTIVITIES = [
     "AP Mounting",
 ]
 
-# % = DONE / TOTAL (INDUK groups + campus average).
-DONE_TOTAL_PCT_ACTIVITIES = [
+# Sheet DONE + TOTAL are trusted (fraction updates).
+TRUSTED_DONE_TOTAL_ACTIVITIES = [
     "UTP Point",
     "AP Mounting",
 ]
+
+# DONE recalculated as % × TOTAL, then rounded to nearest 10.
+PCT_DERIVED_DONE_ROUND10 = [
+    "Trunking",
+    "Lay Cable",
+    "Termination",
+]
+
+# DONE recalculated as % × TOTAL (no round-to-10).
+PCT_DERIVED_DONE_EXACT = [
+    "Fiber Optic",
+]
+
+PCT_DERIVED_DONE_ACTIVITIES = PCT_DERIVED_DONE_ROUND10 + PCT_DERIVED_DONE_EXACT
+
+# Alias used by older call sites / UTP-AP helpers.
+DONE_TOTAL_PCT_ACTIVITIES = TRUSTED_DONE_TOTAL_ACTIVITIES
 
 # DONE / TOTAL counts (whole numbers, not decimals).
 COUNTABLE_ACTIVITIES = [
@@ -66,20 +83,6 @@ COUNTABLE_ACTIVITIES = [
     "Termination",
     "UTP Point",
     "AP Mounting",
-]
-
-# INDUK exception Average % = mean of location percentages (not done/total).
-LOCATION_AVG_ACTIVITIES = [
-    "Trunking",
-    "Lay Cable",
-    "Termination",
-    "Fiber Optic",
-]
-
-# Per-location DONE is derived as % × TOTAL (sheet DONE often blank/0).
-PCT_DERIVED_DONE_ACTIVITIES = [
-    "Lay Cable",
-    "Termination",
 ]
 
 ACTIVE_EQUIPMENT = [
