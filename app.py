@@ -27,6 +27,7 @@ from lib.data_parser import (
     campus_date_snapshot,
     get_campus_overall,
     get_induk_desa_overall,
+    induk_desa_building_increases,
     parse_progress_sheet,
 )
 from lib.sheets_client import (
@@ -182,11 +183,14 @@ def load_data() -> dict[str, dict]:
     return parsed
 
 
-def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str | None]:
+def _metric_delta_note(
+    overall: pd.DataFrame,
+    act: str,
+    buildings: list[str] | None = None,
+) -> tuple[str | None, str | None]:
     """
     Option B: metric + delta pill; caption when there is a change.
-    Fractions: caption shows how much DONE increased (e.g. +20 done since 08/23).
-    Percent activities: caption like +1.5% since 08/23.
+    Fractions: +N done since date (a → b); INDUK may append · K01, K05.
     Zero change → caption "no changes".
     """
     if overall is None or len(overall) < 2:
@@ -195,6 +199,10 @@ def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str
     latest = overall.iloc[-1]
     prev = overall.iloc[-2]
     prev_date = str(prev.get("Date", ""))
+
+    building_note = ""
+    if buildings:
+        building_note = " · " + ", ".join(buildings)
 
     if act in FRACTION_METRIC_ACTIVITIES:
         d0 = prev.get(f"{act}__done")
@@ -208,7 +216,7 @@ def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str
         if delta_done == 0:
             return None, "no changes"
         delta = f"{delta_done:+d}"
-        caption = f"{delta_done:+d} done since {prev_date} ({d0} → {d1})"
+        caption = f"{delta_done:+d} done since {prev_date} ({d0} → {d1}){building_note}"
         return delta, caption
 
     v0 = prev.get(act)
@@ -219,12 +227,16 @@ def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str
     if abs(diff) < 1e-9:
         return None, "no changes"
     delta = f"{diff:+.1f}%"
-    caption = f"{diff:+.1f}% since {prev_date}"
+    caption = f"{diff:+.1f}% since {prev_date}{building_note}"
     return delta, caption
 
 
-def render_activity_average_panel(overall: pd.DataFrame, title: str):
-    """Latest % metric boxes + line chart for UTP Point, AP Mounting, Fiber Optic."""
+def render_activity_average_panel(
+    overall: pd.DataFrame,
+    title: str,
+    building_increases: dict[str, list[str]] | None = None,
+):
+    """Latest metric boxes; optional INDUK building increase labels."""
     if overall is None or overall.empty:
         st.warning("No average percentage data found for this selection.")
         return
@@ -253,7 +265,8 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
                 val = latest.get(act)
                 display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
 
-            delta, detail = _metric_delta_note(overall, act)
+            buildings = (building_increases or {}).get(act)
+            delta, detail = _metric_delta_note(overall, act, buildings=buildings)
             with metric_cols[j]:
                 st.metric(act, display, delta=delta)
                 # Always reserve caption space so columns stay level.
@@ -315,9 +328,17 @@ def render_dashboard(parsed: dict[str, dict]):
         raw_df = parsed.get("INDUK", {}).get("raw_df")
         overall = get_induk_desa_overall(raw_df, desa) if raw_df is not None else pd.DataFrame()
         icon = CAMPUS_ICONS.get("INDUK", "🏫")
+        building_increases: dict[str, list[str]] = {}
+        if raw_df is not None and overall is not None and len(overall) >= 2:
+            prev_date = str(overall.iloc[-2].get("Date", ""))
+            latest_date = str(overall.iloc[-1].get("Date", ""))
+            building_increases = induk_desa_building_increases(
+                raw_df, desa, prev_date, latest_date
+            )
         render_activity_average_panel(
             overall,
             title=f"{icon} {desa}",
+            building_increases=building_increases,
         )
         return
 

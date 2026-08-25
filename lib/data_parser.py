@@ -583,6 +583,94 @@ def get_induk_desa_overall(df: pd.DataFrame, desa_name: str) -> pd.DataFrame:
     """Average % time series for one INDUK desa group."""
     return _compute_induk_overall_by_date(df, group_filter=desa_name)
 
+
+def _building_short_label(location: str) -> str:
+    """Simple building code from a location label, e.g. K01, H06, L12."""
+    text = re.sub(r"\s+", " ", str(location).strip()).upper()
+    matches = re.findall(r"\b([A-Z]\d{2})\b", text)
+    if matches:
+        return matches[-1]
+    m = re.match(r"^([A-Z]\d{1,2})\b", text)
+    return m.group(1) if m else text[:10]
+
+
+def _location_done_for_date_block(
+    df: pd.DataFrame,
+    location_blocks: list[tuple[str, int, int, int]],
+    act_cols: list[int],
+    group_filter: str | None,
+) -> dict[str, dict[str, float]]:
+    """Map short building label → activity DONE for one date's columns."""
+    out: dict[str, dict[str, float]] = {}
+    for location, done_row, total_row, percent_row in location_blocks:
+        group = _induk_group_name(location)
+        if group_filter and group != group_filter:
+            continue
+        if not group:
+            continue
+        done_vals, _total_vals, _pct = _location_block_values(
+            df, done_row, total_row, percent_row, act_cols
+        )
+        short = _building_short_label(location)
+        bucket = out.setdefault(short, {})
+        for act in ACTIVITIES:
+            val = done_vals.get(act)
+            if val is None:
+                continue
+            bucket[act] = float(val)
+    return out
+
+
+def induk_desa_building_increases(
+    df: pd.DataFrame, desa_name: str, prev_date: str, latest_date: str
+) -> dict[str, list[str]]:
+    """
+    For each activity, short building names whose DONE rose between two dates
+    within one INDUK desa group (e.g. {'UTP Point': ['K05', 'K07']}).
+    """
+    if df is None or df.empty or not desa_name:
+        return {}
+
+    header_idx = _detect_header_row_index(df)
+    header_row = df.iloc[header_idx]
+    location_col, progress_col = _detect_location_progress_cols(header_row)
+    blocks = _find_date_blocks(header_row)
+    block_dates = _extract_dates_for_blocks(df, blocks)
+    location_blocks = _iter_location_blocks(df, header_idx, location_col, progress_col)
+
+    prev_norm = _normalize_date_label(prev_date)
+    latest_norm = _normalize_date_label(latest_date)
+
+    def _find_cols(target: str) -> list[int] | None:
+        for date_label, (_, act_cols) in zip(block_dates, blocks):
+            if date_label == target or _normalize_date_label(date_label) == target:
+                return act_cols
+        return None
+
+    prev_cols = _find_cols(prev_norm) or _find_cols(prev_date)
+    latest_cols = _find_cols(latest_norm) or _find_cols(latest_date)
+    if not prev_cols or not latest_cols:
+        return {}
+
+    prev_map = _location_done_for_date_block(
+        df, location_blocks, prev_cols, desa_name
+    )
+    latest_map = _location_done_for_date_block(
+        df, location_blocks, latest_cols, desa_name
+    )
+
+    increases: dict[str, list[str]] = {act: [] for act in ACTIVITIES}
+    for short in sorted(set(prev_map) | set(latest_map)):
+        for act in ACTIVITIES:
+            v0 = prev_map.get(short, {}).get(act)
+            v1 = latest_map.get(short, {}).get(act)
+            if v0 is None or v1 is None:
+                continue
+            if v1 > v0 + 1e-9:
+                increases[act].append(short)
+
+    return {act: names for act, names in increases.items() if names}
+
 def _read_sheet_summary_for_block(
     df: pd.DataFrame,
     act_cols: list[int],
@@ -861,6 +949,7 @@ __all__ = [
     "campus_date_snapshot",
     "get_campus_overall",
     "get_induk_desa_overall",
+    "induk_desa_building_increases",
     "parse_progress_sheet",
     "sheet_overall_percent",
     "campus_sheets_summary",
