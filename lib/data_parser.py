@@ -385,10 +385,9 @@ def _location_block_values(
     Read DONE / TOTAL / PERCENTAGE for one location block.
 
     Trusted from sheet: UTP Point, AP Mounting (DONE + TOTAL).
-    Recalculated DONE = % × TOTAL:
-      - Trunking / Lay Cable / Termination → round to nearest 10
-      - Fiber Optic → no round-to-10
-    TOTAL and % for those columns stay from the sheet.
+    Trunking / Lay Cable / Termination: DONE not collected → None (show N/A).
+      TOTAL and % stay from the sheet; dashboard uses location-mean %.
+    Fiber Optic: DONE = % × TOTAL (no round-to-10).
     """
     done_vals = _activity_values_from_row(
         df.iloc[done_row], act_cols, include_equipment=include_equipment
@@ -409,12 +408,9 @@ def _location_block_values(
                 else None
             )
 
+    # Only % + TOTAL are collected for these — never invent a DONE count.
     for act_name in PCT_DERIVED_DONE_ROUND10:
-        derived = _derived_done_from_pct(
-            total_vals.get(act_name), pct_vals.get(act_name), round_nearest_10=True
-        )
-        if derived is not None:
-            done_vals[act_name] = derived
+        done_vals[act_name] = None
 
     for act_name in PCT_DERIVED_DONE_EXACT:
         derived = _derived_done_from_pct(
@@ -1046,13 +1042,24 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
         base = values or {}
         for col in TABLE_COLUMNS:
             if label == "AVERAGE PERCENTAGE":
-                if col in key_acts:
+                if col in LOCATION_MEAN_PCT_ACTIVITIES:
+                    pct = _mean_location_percent(
+                        location_blocks,
+                        df,
+                        act_cols,
+                        col,
+                        induk_grouped_only=True,
+                    )
+                    row[col] = f"{pct:.2f}%" if pct is not None else "N/A"
+                elif col in key_acts:
                     pct = campus_avg.get(col)
                     row[col] = f"{pct:.2f}%" if pct is not None else "N/A"
                 else:
                     row[col] = base.get(col, "N/A")
             elif label == "TOTAL DONE":
-                if col in key_acts and sum_done.get(col) is not None:
+                if col in PCT_DERIVED_DONE_ROUND10:
+                    row[col] = "N/A"
+                elif col in key_acts and sum_done.get(col) is not None:
                     row[col] = _display_activity_cell(sum_done[col], col, "TOTAL DONE")
                 else:
                     row[col] = base.get(col, "N/A")
@@ -1096,6 +1103,12 @@ def _cell_display(value, as_count: bool = False) -> str:
 
 def _display_activity_cell(value, column: str, progress_label: str) -> str:
     """Format DONE/TOTAL counts as integers for countable activities."""
+    # Trunking / Lay Cable / Termination: only % + TOTAL are collected.
+    if (
+        column in PCT_DERIVED_DONE_ROUND10
+        and str(progress_label).strip().upper() in {"DONE", "TOTAL DONE"}
+    ):
+        return "N/A"
     count_rows = {"DONE", "TOTAL", "TOTAL DONE", "OVERALL TOTAL"}
     as_count = column in COUNTABLE_ACTIVITIES and progress_label.upper() in count_rows
     return _cell_display(value, as_count=as_count)
@@ -1178,9 +1191,12 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
             "Progress": progress_out,
         }
         for act_name, col_idx in zip(ACTIVITIES, act_cols):
+            if progress_out == "DONE" and act_name in PCT_DERIVED_DONE_ROUND10:
+                row_data[act_name] = "N/A"
+                continue
             if (
                 progress_out == "DONE"
-                and act_name in PCT_DERIVED_DONE_ACTIVITIES
+                and act_name in PCT_DERIVED_DONE_EXACT
                 and current_location in derived_done_by_loc
             ):
                 derived = derived_done_by_loc[current_location].get(act_name)

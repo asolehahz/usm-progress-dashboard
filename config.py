@@ -59,7 +59,8 @@ TRUSTED_DONE_TOTAL_ACTIVITIES = [
     "AP Mounting",
 ]
 
-# DONE recalculated as % × TOTAL, then rounded to nearest 10.
+# Sheet has % + TOTAL only (no reliable DONE). Dashboard uses location-mean %.
+# Daily DONE row shows N/A for these.
 PCT_DERIVED_DONE_ROUND10 = [
     "Trunking",
     "Lay Cable",
@@ -78,6 +79,8 @@ PCT_DERIVED_DONE_ACTIVITIES = PCT_DERIVED_DONE_ROUND10 + PCT_DERIVED_DONE_EXACT
 # Other campuses: mean across all locations on that sheet.
 LOCATION_MEAN_PCT_ACTIVITIES = [
     "Trunking",
+    "Lay Cable",
+    "Termination",
 ]
 
 # Alias used by older call sites / UTP-AP helpers.
