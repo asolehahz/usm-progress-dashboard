@@ -769,6 +769,37 @@ def _location_percent_for_date_block(
     return out
 
 
+def _location_done_counts_for_date_block(
+    df: pd.DataFrame,
+    location_blocks: list[tuple[str, int, int, int]],
+    act_cols: list[int],
+    activities: list[str],
+    *,
+    group_filter: str | None = None,
+    induk_grouped_only: bool = False,
+) -> dict[str, dict[str, float]]:
+    """Map full location label → trusted DONE counts for selected activities."""
+    out: dict[str, dict[str, float]] = {}
+    for location, done_row, total_row, percent_row in location_blocks:
+        if group_filter or induk_grouped_only:
+            group = _induk_group_name(location)
+            if group_filter and group != group_filter:
+                continue
+            if induk_grouped_only and not group:
+                continue
+        done_vals, _total_vals, _pct = _location_block_values(
+            df, done_row, total_row, percent_row, act_cols
+        )
+        bucket: dict[str, float] = {}
+        for act in activities:
+            val = done_vals.get(act)
+            if val is not None:
+                bucket[act] = float(val)
+        if bucket:
+            out[location] = bucket
+    return out
+
+
 def location_change_summary(
     df: pd.DataFrame,
     prev_date: str,
@@ -778,10 +809,12 @@ def location_change_summary(
     induk_grouped_only: bool = False,
 ) -> pd.DataFrame:
     """
-    Rows where a location's activity % changed between two dates.
+    Rows where a location's progress changed between two dates.
 
-    Columns: Location, Item, <prev>, <latest>, Change
-    Change uses ↑ / ↓ for increases / decreases.
+    - UTP Point / AP Mounting: compare DONE counts (same as dashboard metrics)
+    - Other activities: compare PERCENTAGE
+
+    Columns: Location, Item, <prev>, <latest>, Change (↑ / ↓).
     """
     empty = pd.DataFrame(columns=["Location", "Item", "Change"])
     if df is None or df.empty or not prev_date or not latest_date:
@@ -808,48 +841,73 @@ def location_change_summary(
     if not prev_cols or not latest_cols:
         return empty
 
-    prev_map = _location_percent_for_date_block(
-        df,
-        location_blocks,
-        prev_cols,
+    filter_kw = dict(
         group_filter=group_filter,
         induk_grouped_only=induk_grouped_only,
     )
-    latest_map = _location_percent_for_date_block(
-        df,
-        location_blocks,
-        latest_cols,
-        group_filter=group_filter,
-        induk_grouped_only=induk_grouped_only,
+    prev_pct = _location_percent_for_date_block(
+        df, location_blocks, prev_cols, **filter_kw
+    )
+    latest_pct = _location_percent_for_date_block(
+        df, location_blocks, latest_cols, **filter_kw
+    )
+    fraction_acts = list(FRACTION_METRIC_ACTIVITIES)
+    prev_done = _location_done_counts_for_date_block(
+        df, location_blocks, prev_cols, fraction_acts, **filter_kw
+    )
+    latest_done = _location_done_counts_for_date_block(
+        df, location_blocks, latest_cols, fraction_acts, **filter_kw
     )
 
     prev_col = _short_day_month(prev_date)
     latest_col = _short_day_month(latest_date)
-    # Avoid duplicate headers if both format the same.
     if prev_col == latest_col:
         prev_col = f"{prev_col} (prev)"
         latest_col = f"{latest_col} (latest)"
 
+    locations = sorted(
+        set(prev_pct) | set(latest_pct) | set(prev_done) | set(latest_done),
+        key=lambda s: s.upper(),
+    )
     rows: list[dict[str, str]] = []
-    for location in sorted(set(prev_map) | set(latest_map), key=lambda s: s.upper()):
+    for location in locations:
         for act in ACTIVITIES:
-            v0 = prev_map.get(location, {}).get(act)
-            v1 = latest_map.get(location, {}).get(act)
-            if v0 is None or v1 is None:
-                continue
-            diff = float(v1) - float(v0)
-            if abs(diff) < 1e-9:
-                continue
-            arrow = "↑" if diff > 0 else "↓"
-            rows.append(
-                {
-                    "Location": _friendly_location_label(location),
-                    "Item": act,
-                    prev_col: f"{v0:.0f}%",
-                    latest_col: f"{v1:.0f}%",
-                    "Change": f"{arrow} {abs(diff):.0f}%",
-                }
-            )
+            if act in FRACTION_METRIC_ACTIVITIES:
+                v0 = prev_done.get(location, {}).get(act)
+                v1 = latest_done.get(location, {}).get(act)
+                if v0 is None or v1 is None:
+                    continue
+                diff = float(v1) - float(v0)
+                if abs(diff) < 1e-9:
+                    continue
+                arrow = "↑" if diff > 0 else "↓"
+                rows.append(
+                    {
+                        "Location": _friendly_location_label(location),
+                        "Item": act,
+                        prev_col: str(int(round(v0))),
+                        latest_col: str(int(round(v1))),
+                        "Change": f"{arrow} {abs(int(round(diff)))}",
+                    }
+                )
+            else:
+                v0 = prev_pct.get(location, {}).get(act)
+                v1 = latest_pct.get(location, {}).get(act)
+                if v0 is None or v1 is None:
+                    continue
+                diff = float(v1) - float(v0)
+                if abs(diff) < 1e-9:
+                    continue
+                arrow = "↑" if diff > 0 else "↓"
+                rows.append(
+                    {
+                        "Location": _friendly_location_label(location),
+                        "Item": act,
+                        prev_col: f"{v0:.0f}%",
+                        latest_col: f"{v1:.0f}%",
+                        "Change": f"{arrow} {abs(diff):.0f}%",
+                    }
+                )
 
     if not rows:
         return pd.DataFrame(
