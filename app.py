@@ -695,10 +695,7 @@ def main():
                 st.Page(page_dashboard, title="Dashboard", icon="📊", default=True),
             ],
             "Check Daily Data": list(CAMPUS_PAGES.values()),
-            "More": [
-                st.Page(page_issues, title="Issue & Risk", icon="⚠️", url_path="issue-risk"),
-                st.Page(page_history, title="Daily History", icon="🗂️"),
-            ],
+            # Temporarily hidden — restore Issue & Risk / Daily History here when needed.
         },
         position="sidebar",
     )
