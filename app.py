@@ -245,6 +245,9 @@ def render_activity_average_panel(
 
     latest = overall.iloc[-1]
     st.subheader(title)
+    st.caption(
+        "Note: Percentage values are the average percentage calculated across locations."
+    )
 
     # Two fixed rows of 4 so cards stay aligned (equal structure per cell).
     for row_start in (0, 4):
