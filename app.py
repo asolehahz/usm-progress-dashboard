@@ -184,10 +184,10 @@ def load_data() -> dict[str, dict]:
 
 def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str | None]:
     """
-    Option B: metric + delta pill; caption only when there is a change.
+    Option B: metric + delta pill; caption when there is a change.
     Fractions: caption shows how much DONE increased (e.g. +20 done since 08/23).
     Percent activities: caption like +1.5% since 08/23.
-    Zero change → no delta pill (keeps card heights even).
+    Zero change → caption "no changes".
     """
     if overall is None or len(overall) < 2:
         return None, None
@@ -206,7 +206,7 @@ def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str
         d0, d1 = int(d0), int(d1)
         delta_done = d1 - d0
         if delta_done == 0:
-            return None, None
+            return None, "no changes"
         delta = f"{delta_done:+d}"
         caption = f"{delta_done:+d} done since {prev_date} ({d0} → {d1})"
         return delta, caption
@@ -217,7 +217,7 @@ def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str
         return None, None
     diff = float(v1) - float(v0)
     if abs(diff) < 1e-9:
-        return None, None
+        return None, "no changes"
     delta = f"{diff:+.1f}%"
     caption = f"{diff:+.1f}% since {prev_date}"
     return delta, caption
