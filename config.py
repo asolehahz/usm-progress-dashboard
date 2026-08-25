@@ -73,6 +73,13 @@ PCT_DERIVED_DONE_EXACT = [
 
 PCT_DERIVED_DONE_ACTIVITIES = PCT_DERIVED_DONE_ROUND10 + PCT_DERIVED_DONE_EXACT
 
+# Dashboard % = mean of location PERCENTAGE rows (not DONE÷TOTAL).
+# INDUK: mean within the selected desa group (or all grouped locations).
+# Other campuses: mean across all locations on that sheet.
+LOCATION_MEAN_PCT_ACTIVITIES = [
+    "Trunking",
+]
+
 # Alias used by older call sites / UTP-AP helpers.
 DONE_TOTAL_PCT_ACTIVITIES = TRUSTED_DONE_TOTAL_ACTIVITIES
 

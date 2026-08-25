@@ -15,6 +15,7 @@ from config import (
     DONE_TOTAL_PCT_ACTIVITIES,
     FRACTION_METRIC_ACTIVITIES,
     INDUK_LOCATION_GROUPS,
+    LOCATION_MEAN_PCT_ACTIVITIES,
     PCT_DERIVED_DONE_ACTIVITIES,
     PCT_DERIVED_DONE_EXACT,
     PCT_DERIVED_DONE_ROUND10,
@@ -444,6 +445,46 @@ def _average_percent_from_totals(
     return result
 
 
+def _mean_location_percent(
+    location_blocks: list[tuple[str, int, int, int]],
+    df: pd.DataFrame,
+    act_cols: list[int],
+    activity: str,
+    *,
+    group_filter: str | None = None,
+    induk_grouped_only: bool = False,
+) -> float | None:
+    """
+    Dashboard % = (sum of location PERCENTAGE) / (number of locations with a %).
+
+    INDUK: pass group_filter for one desa, or induk_grouped_only=True for all
+    locations that map to INDUK_LOCATION_GROUPS.
+    Other campuses: leave both unset to include every location block.
+    """
+    try:
+        col_idx = act_cols[ACTIVITIES.index(activity)]
+    except (ValueError, IndexError):
+        return None
+
+    values: list[float] = []
+    for location, _done_row, _total_row, percent_row in location_blocks:
+        if group_filter or induk_grouped_only:
+            group = _induk_group_name(location)
+            if group_filter and group != group_filter:
+                continue
+            if induk_grouped_only and not group:
+                continue
+        if col_idx >= len(df.columns):
+            continue
+        pct = _parse_percent(df.iloc[percent_row, col_idx])
+        if pct is not None:
+            values.append(pct)
+
+    if not values:
+        return None
+    return round(sum(values) / len(values), 2)
+
+
 def _sum_location_done_total(
     location_blocks: list[tuple[str, int, int, int]],
     df: pd.DataFrame,
@@ -517,7 +558,8 @@ def _compute_induk_overall_by_date(
 ) -> pd.DataFrame:
     """
     INDUK summary per date block using grouped DONE/TOTAL rollups.
-    PERCENTAGE = accumulated DONE / accumulated TOTAL.
+    Most activities: PERCENTAGE = accumulated DONE / accumulated TOTAL.
+    Trunking: mean of location PERCENTAGE within the desa (or all groups).
     If group_filter is set, only that desa group is included.
     """
     header_idx = _detect_header_row_index(df)
@@ -561,6 +603,16 @@ def _compute_induk_overall_by_date(
         record = {"Date": _normalize_date_label(date_label)}
         averages = _average_percent_from_totals(campus_done, campus_total)
         record.update(averages)
+        # Trunking (etc.): mean of location % within the desa / all groups.
+        for act in LOCATION_MEAN_PCT_ACTIVITIES:
+            record[act] = _mean_location_percent(
+                location_blocks,
+                df,
+                act_cols,
+                act,
+                group_filter=group_filter,
+                induk_grouped_only=group_filter is None,
+            )
         for act in FRACTION_METRIC_ACTIVITIES:
             done = campus_done.get(act)
             total = campus_total.get(act)
@@ -979,9 +1031,10 @@ def _find_average_percentage_row(
 
 def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Non-INDUK campus AVERAGE series (mostly from sheet).
+    Non-INDUK campus AVERAGE series.
 
-    UTP / AP metrics use DONE/TOTAL. Other activities use sheet AVERAGE row.
+    UTP / AP: DONE/TOTAL. Trunking: mean of location %.
+    Other activities: sheet AVERAGE PERCENTAGE row.
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -1010,7 +1063,11 @@ def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
             location_blocks, df, act_cols, list(TRUSTED_DONE_TOTAL_ACTIVITIES)
         )
         for act_name, col_idx in zip(ACTIVITIES, act_cols):
-            if act_name in TRUSTED_DONE_TOTAL_ACTIVITIES:
+            if act_name in LOCATION_MEAN_PCT_ACTIVITIES:
+                record[act_name] = _mean_location_percent(
+                    location_blocks, df, act_cols, act_name
+                )
+            elif act_name in TRUSTED_DONE_TOTAL_ACTIVITIES:
                 d = sum_done.get(act_name)
                 t = sum_total.get(act_name)
                 if d is not None and t is not None and t != 0:
