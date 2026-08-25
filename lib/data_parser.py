@@ -723,6 +723,141 @@ def induk_desa_building_increases(
 
     return {act: names for act, names in increases.items() if names}
 
+
+def _friendly_location_label(location: str) -> str:
+    """Short display name, e.g. 'Aman Damai K08'."""
+    text = re.sub(r"\s+", " ", str(location).strip())
+    text = re.sub(r"^(Desasiswa|DS)\s+", "", text, flags=re.IGNORECASE)
+    return text.strip() or str(location).strip()
+
+
+def _short_day_month(date_str: str) -> str:
+    """Format date as D/M for table headers, e.g. 23/08."""
+    parts = _parse_date_parts(date_str)
+    if not parts:
+        return str(date_str).strip()
+    _year, month, day = parts
+    return f"{day:02d}/{month:02d}"
+
+
+def _location_percent_for_date_block(
+    df: pd.DataFrame,
+    location_blocks: list[tuple[str, int, int, int]],
+    act_cols: list[int],
+    *,
+    group_filter: str | None = None,
+    induk_grouped_only: bool = False,
+) -> dict[str, dict[str, float]]:
+    """Map full location label → activity PERCENTAGE for one date block."""
+    out: dict[str, dict[str, float]] = {}
+    for location, _done_row, _total_row, percent_row in location_blocks:
+        if group_filter or induk_grouped_only:
+            group = _induk_group_name(location)
+            if group_filter and group != group_filter:
+                continue
+            if induk_grouped_only and not group:
+                continue
+        bucket: dict[str, float] = {}
+        for act_name, col_idx in zip(ACTIVITIES, act_cols):
+            if col_idx >= len(df.columns):
+                continue
+            pct = _parse_percent(df.iloc[percent_row, col_idx])
+            if pct is not None:
+                bucket[act_name] = pct
+        if bucket:
+            out[location] = bucket
+    return out
+
+
+def location_change_summary(
+    df: pd.DataFrame,
+    prev_date: str,
+    latest_date: str,
+    *,
+    group_filter: str | None = None,
+    induk_grouped_only: bool = False,
+) -> pd.DataFrame:
+    """
+    Rows where a location's activity % changed between two dates.
+
+    Columns: Location, Item, <prev>, <latest>, Change
+    Latest value is marked with 🟨 when it differs; Change uses ↑ / ↓.
+    """
+    empty = pd.DataFrame(columns=["Location", "Item", "Change"])
+    if df is None or df.empty or not prev_date or not latest_date:
+        return empty
+
+    header_idx = _detect_header_row_index(df)
+    header_row = df.iloc[header_idx]
+    location_col, progress_col = _detect_location_progress_cols(header_row)
+    blocks = _find_date_blocks(header_row)
+    block_dates = _extract_dates_for_blocks(df, blocks)
+    location_blocks = _iter_location_blocks(df, header_idx, location_col, progress_col)
+
+    prev_norm = _normalize_date_label(prev_date)
+    latest_norm = _normalize_date_label(latest_date)
+
+    def _find_cols(target: str) -> list[int] | None:
+        for date_label, (_, act_cols) in zip(block_dates, blocks):
+            if date_label == target or _normalize_date_label(date_label) == target:
+                return act_cols
+        return None
+
+    prev_cols = _find_cols(prev_norm) or _find_cols(prev_date)
+    latest_cols = _find_cols(latest_norm) or _find_cols(latest_date)
+    if not prev_cols or not latest_cols:
+        return empty
+
+    prev_map = _location_percent_for_date_block(
+        df,
+        location_blocks,
+        prev_cols,
+        group_filter=group_filter,
+        induk_grouped_only=induk_grouped_only,
+    )
+    latest_map = _location_percent_for_date_block(
+        df,
+        location_blocks,
+        latest_cols,
+        group_filter=group_filter,
+        induk_grouped_only=induk_grouped_only,
+    )
+
+    prev_col = _short_day_month(prev_date)
+    latest_col = _short_day_month(latest_date)
+    # Avoid duplicate headers if both format the same.
+    if prev_col == latest_col:
+        prev_col = f"{prev_col} (prev)"
+        latest_col = f"{latest_col} (latest)"
+
+    rows: list[dict[str, str]] = []
+    for location in sorted(set(prev_map) | set(latest_map), key=lambda s: s.upper()):
+        for act in ACTIVITIES:
+            v0 = prev_map.get(location, {}).get(act)
+            v1 = latest_map.get(location, {}).get(act)
+            if v0 is None or v1 is None:
+                continue
+            diff = float(v1) - float(v0)
+            if abs(diff) < 1e-9:
+                continue
+            arrow = "↑" if diff > 0 else "↓"
+            rows.append(
+                {
+                    "Location": _friendly_location_label(location),
+                    "Item": act,
+                    prev_col: f"{v0:.0f}%",
+                    latest_col: f"🟨 {v1:.0f}%",
+                    "Change": f"{arrow} {abs(diff):.0f}%",
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame(
+            columns=["Location", "Item", prev_col, latest_col, "Change"]
+        )
+    return pd.DataFrame(rows)
+
+
 def _read_sheet_summary_for_block(
     df: pd.DataFrame,
     act_cols: list[int],
@@ -1015,6 +1150,7 @@ __all__ = [
     "get_campus_overall",
     "get_induk_desa_overall",
     "induk_desa_building_increases",
+    "location_change_summary",
     "parse_progress_sheet",
     "sheet_overall_percent",
     "campus_sheets_summary",

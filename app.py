@@ -7,6 +7,8 @@ Run locally:
 
 from __future__ import annotations
 
+import re
+
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -29,6 +31,7 @@ from lib.data_parser import (
     get_induk_desa_overall,
     induk_desa_building_increases,
     induk_grouped_snapshot,
+    location_change_summary,
     parse_progress_sheet,
 )
 from lib.sheets_client import (
@@ -315,6 +318,44 @@ def render_activity_average_panel(
         st.plotly_chart(fig, width="stretch")
 
 
+def render_change_summary(summary: pd.DataFrame, prev_date: str, latest_date: str):
+    """Table of location×activity % that changed between the last two dates."""
+    st.subheader("Changes since previous date")
+    if summary is None or summary.empty:
+        st.caption(
+            f"No percentage changes between {_short_date_caption(prev_date)} "
+            f"and {_short_date_caption(latest_date)}."
+        )
+        return
+    st.caption(
+        f"Comparing {_short_date_caption(prev_date)} → {_short_date_caption(latest_date)}. "
+        "🟨 marks the newer value."
+    )
+    st.dataframe(summary, width="stretch", hide_index=True)
+
+
+def _short_date_caption(date_str: str) -> str:
+    """Prefer D/M for captions; fall back to original string."""
+    text = str(date_str or "").strip()
+    if not text:
+        return "—"
+    parts = re.split(r"[/-]", text)
+    if len(parts) == 3:
+        try:
+            a, b, c = (int(p) for p in parts)
+        except ValueError:
+            return text
+        # Normalized labels are mm/dd/yyyy.
+        if a > 12:
+            day, month = a, b
+        elif b > 12:
+            month, day = a, b
+        else:
+            month, day = a, b
+        return f"{day:02d}/{month:02d}"
+    return text
+
+
 def render_dashboard(parsed: dict[str, dict]):
     st.header("Dashboard")
 
@@ -330,6 +371,8 @@ def render_dashboard(parsed: dict[str, dict]):
         overall = get_induk_desa_overall(raw_df, desa) if raw_df is not None else pd.DataFrame()
         icon = CAMPUS_ICONS.get("INDUK", "🏫")
         building_increases: dict[str, list[str]] = {}
+        prev_date = ""
+        latest_date = ""
         if raw_df is not None and overall is not None and len(overall) >= 2:
             prev_date = str(overall.iloc[-2].get("Date", ""))
             latest_date = str(overall.iloc[-1].get("Date", ""))
@@ -341,14 +384,36 @@ def render_dashboard(parsed: dict[str, dict]):
             title=f"{icon} {desa}",
             building_increases=building_increases,
         )
+        if raw_df is not None and prev_date and latest_date:
+            summary = location_change_summary(
+                raw_df, prev_date, latest_date, group_filter=desa
+            )
+            render_change_summary(summary, prev_date, latest_date)
         return
 
-    overall = parsed.get(campus, {}).get("overall", pd.DataFrame())
+    data = parsed.get(campus, {})
+    overall = data.get("overall", pd.DataFrame())
+    raw_df = data.get("raw_df")
     icon = CAMPUS_ICONS.get(campus, "🏫")
     render_activity_average_panel(
         overall,
         title=f"{icon} {campus}",
     )
+    if (
+        raw_df is not None
+        and overall is not None
+        and not getattr(overall, "empty", True)
+        and len(overall) >= 2
+    ):
+        prev_date = str(overall.iloc[-2].get("Date", ""))
+        latest_date = str(overall.iloc[-1].get("Date", ""))
+        summary = location_change_summary(
+            raw_df,
+            prev_date,
+            latest_date,
+            induk_grouped_only=(campus == "INDUK"),
+        )
+        render_change_summary(summary, prev_date, latest_date)
 
 
 def _campus_page_runner(campus: str):
