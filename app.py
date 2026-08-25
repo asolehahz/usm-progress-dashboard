@@ -259,43 +259,46 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
                 # Always reserve caption space so columns stay level.
                 st.caption(detail if detail else "\u00a0")
 
-    date_order = overall["Date"].tolist()
-    fig = go.Figure()
-    for i, act in enumerate(DASHBOARD_CHART_ACTIVITIES):
-        if act in overall.columns:
-            fig.add_trace(
-                go.Scatter(
-                    x=overall["Date"],
-                    y=overall[act],
-                    mode="lines+markers",
-                    name=act,
-                    line=dict(
-                        color=ACTIVITY_COLORS.get(act, CHART_COLORS[i % len(CHART_COLORS)]),
-                        width=2,
-                    ),
-                    marker=dict(size=6),
-                    connectgaps=False,
+    # Chart hidden for now — set True to show again.
+    show_dashboard_chart = False
+    if show_dashboard_chart:
+        date_order = overall["Date"].tolist()
+        fig = go.Figure()
+        for i, act in enumerate(DASHBOARD_CHART_ACTIVITIES):
+            if act in overall.columns:
+                fig.add_trace(
+                    go.Scatter(
+                        x=overall["Date"],
+                        y=overall[act],
+                        mode="lines+markers",
+                        name=act,
+                        line=dict(
+                            color=ACTIVITY_COLORS.get(act, CHART_COLORS[i % len(CHART_COLORS)]),
+                            width=2,
+                        ),
+                        marker=dict(size=6),
+                        connectgaps=False,
+                    )
                 )
-            )
-    fig.update_layout(
-        height=420,
-        xaxis_title="Date (mm/dd/yyyy)",
-        yaxis_title="Progress (%)",
-        yaxis_range=[0, 105],
-        xaxis=dict(
-            categoryorder="array",
-            categoryarray=date_order,
-            type="category",
-            tickangle=-30,
-        ),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        margin=dict(l=40, r=20, t=40, b=60),
-        paper_bgcolor="#FFFFFF",
-        plot_bgcolor="#FAFAFA",
-        font=dict(color="#4B2876"),
-        colorway=CHART_COLORS,
-    )
-    st.plotly_chart(fig, width="stretch")
+        fig.update_layout(
+            height=420,
+            xaxis_title="Date (mm/dd/yyyy)",
+            yaxis_title="Progress (%)",
+            yaxis_range=[0, 105],
+            xaxis=dict(
+                categoryorder="array",
+                categoryarray=date_order,
+                type="category",
+                tickangle=-30,
+            ),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            margin=dict(l=40, r=20, t=40, b=60),
+            paper_bgcolor="#FFFFFF",
+            plot_bgcolor="#FAFAFA",
+            font=dict(color="#4B2876"),
+            colorway=CHART_COLORS,
+        )
+        st.plotly_chart(fig, width="stretch")
 
 
 def render_dashboard(parsed: dict[str, dict]):
