@@ -29,8 +29,6 @@ from lib.data_parser import (
     get_induk_desa_overall,
     induk_desa_building_increases,
     parse_progress_sheet,
-    previous_available_date,
-    snapshot_change_mask,
 )
 from lib.sheets_client import (
     append_history_row,
@@ -404,26 +402,7 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
     if snapshot.empty:
         st.info("No DONE/TOTAL/PERCENTAGE rows found for this date.")
     else:
-        prev_date = previous_available_date(daily_dates, selected_date)
-        display = snapshot
-        if prev_date:
-            prev_snap = campus_date_snapshot(raw_df, prev_date, campus=campus)
-            change_mask = snapshot_change_mask(snapshot, prev_snap)
-            if change_mask.any().any():
-                styles = change_mask.map(
-                    lambda changed: (
-                        "background-color: #FFE082; font-weight: 600"
-                        if changed
-                        else ""
-                    )
-                )
-                display = snapshot.style.apply(lambda _: styles, axis=None)
-            st.caption(
-                f"Yellow cells changed vs previous date (**{prev_date}**)."
-            )
-        else:
-            st.caption("No earlier date to compare — showing selected date only.")
-        st.dataframe(display, width="stretch", hide_index=True)
+        st.dataframe(snapshot, width="stretch", hide_index=True)
 
 
 def render_issues():
