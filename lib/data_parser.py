@@ -942,10 +942,109 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
     return pd.DataFrame(rows)
 
 
+def previous_available_date(dates: list[str], selected: str) -> str | None:
+    """Chronological day before selected (None if selected is the oldest)."""
+    if not dates or not selected:
+        return None
+    selected_norm = _normalize_date_label(selected)
+    chrono: list[str] = []
+    seen: set[str] = set()
+    for d in dates:
+        key = _normalize_date_label(d)
+        if key in seen:
+            continue
+        seen.add(key)
+        chrono.append(d)
+    chrono.sort(key=_parse_date_key)
+    idx = next(
+        (
+            i
+            for i, d in enumerate(chrono)
+            if d == selected or _normalize_date_label(d) == selected_norm
+        ),
+        None,
+    )
+    if idx is None or idx == 0:
+        return None
+    return chrono[idx - 1]
+
+
+def _snapshot_row_key(location: str, progress: str) -> tuple[str, str]:
+    return (location.strip().upper(), progress.strip().upper())
+
+
+def _snapshot_value_lookup(df: pd.DataFrame) -> dict[tuple[str, str], dict[str, str]]:
+    """Map (location, progress) → activity/equipment cell strings."""
+    lookup: dict[tuple[str, str], dict[str, str]] = {}
+    if df is None or df.empty:
+        return lookup
+    current_location = ""
+    value_cols = [c for c in df.columns if c not in ("Location", "Progress")]
+    for _, row in df.iterrows():
+        loc = str(row.get("Location", "") or "").strip()
+        prog = str(row.get("Progress", "") or "").strip()
+        if not prog and loc:
+            key = _snapshot_row_key(loc, "")
+        else:
+            if prog.upper() == "DONE" and loc:
+                current_location = loc
+            key = _snapshot_row_key(current_location, prog)
+        lookup[key] = {c: str(row.get(c, "") or "") for c in value_cols}
+    return lookup
+
+
+def snapshot_change_mask(
+    current: pd.DataFrame, previous: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Boolean mask same shape as current: True where a value cell differs
+    from the matching (location, progress) row on the previous date.
+    Location / Progress columns are always False.
+    """
+    if current is None or current.empty:
+        return pd.DataFrame()
+    mask = pd.DataFrame(False, index=current.index, columns=current.columns)
+    if previous is None or previous.empty:
+        return mask
+
+    prev_lookup = _snapshot_value_lookup(previous)
+    value_cols = [c for c in current.columns if c not in ("Location", "Progress")]
+    current_location = ""
+
+    for idx, row in current.iterrows():
+        loc = str(row.get("Location", "") or "").strip()
+        prog = str(row.get("Progress", "") or "").strip()
+        if not prog and loc:
+            key = _snapshot_row_key(loc, "")
+        else:
+            if prog.upper() == "DONE" and loc:
+                current_location = loc
+            key = _snapshot_row_key(current_location, prog)
+
+        prev_vals = prev_lookup.get(key)
+        if prev_vals is None:
+            # New location/summary row vs previous date — treat values as changed.
+            for col in value_cols:
+                cur_val = str(row.get(col, "") or "")
+                if cur_val and cur_val != "N/A":
+                    mask.at[idx, col] = True
+            continue
+
+        for col in value_cols:
+            cur_val = str(row.get(col, "") or "")
+            prev_val = str(prev_vals.get(col, "") or "")
+            if cur_val != prev_val:
+                mask.at[idx, col] = True
+
+    return mask
+
+
 __all__ = [
     "LocationProgress",
     "available_dates",
     "campus_date_snapshot",
+    "previous_available_date",
+    "snapshot_change_mask",
     "get_campus_overall",
     "get_induk_desa_overall",
     "induk_desa_building_increases",
