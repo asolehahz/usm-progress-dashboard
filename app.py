@@ -7,8 +7,6 @@ Run locally:
 
 from __future__ import annotations
 
-import re
-
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -270,11 +268,9 @@ def render_activity_average_panel(
                 display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
 
             buildings = (building_increases or {}).get(act)
-            delta, detail = _metric_delta_note(overall, act, buildings=buildings)
+            delta, _detail = _metric_delta_note(overall, act, buildings=buildings)
             with metric_cols[j]:
                 st.metric(act, display, delta=delta)
-                # Always reserve caption space so columns stay level.
-                st.caption(detail if detail else "\u00a0")
 
     # Chart hidden for now — set True to show again.
     show_dashboard_chart = False
@@ -319,41 +315,11 @@ def render_activity_average_panel(
 
 
 def render_change_summary(summary: pd.DataFrame, prev_date: str, latest_date: str):
-    """Table of location×activity % that changed between the last two dates."""
+    """Table of location×activity values that changed between the last two dates."""
     st.subheader("Changes since previous date")
     if summary is None or summary.empty:
-        st.caption(
-            f"No percentage changes between {_short_date_caption(prev_date)} "
-            f"and {_short_date_caption(latest_date)}."
-        )
         return
-    st.caption(
-        f"Comparing {_short_date_caption(prev_date)} → {_short_date_caption(latest_date)}. "
-        "UTP Point / AP Mounting show DONE counts; other items show %."
-    )
     st.dataframe(summary, width="stretch", hide_index=True)
-
-
-def _short_date_caption(date_str: str) -> str:
-    """Prefer D/M for captions; fall back to original string."""
-    text = str(date_str or "").strip()
-    if not text:
-        return "—"
-    parts = re.split(r"[/-]", text)
-    if len(parts) == 3:
-        try:
-            a, b, c = (int(p) for p in parts)
-        except ValueError:
-            return text
-        # Normalized labels are mm/dd/yyyy.
-        if a > 12:
-            day, month = a, b
-        elif b > 12:
-            month, day = a, b
-        else:
-            month, day = a, b
-        return f"{day:02d}/{month:02d}"
-    return text
 
 
 def render_dashboard(parsed: dict[str, dict]):
