@@ -384,7 +384,8 @@ def _location_block_values(
     """
     Read DONE / TOTAL / PERCENTAGE for one location block.
 
-    Trusted from sheet: UTP Point, AP Mounting (DONE + TOTAL).
+    Trusted from sheet: UTP Point, AP Mounting (DONE + TOTAL);
+      PERCENTAGE recalculated as DONE / TOTAL × 100.
     Trunking / Lay Cable / Termination: DONE not collected → None (show N/A).
       TOTAL and % stay from the sheet; dashboard uses location-mean %.
     Fiber Optic: DONE = % × TOTAL (no round-to-10).
@@ -418,6 +419,15 @@ def _location_block_values(
         )
         if derived is not None:
             done_vals[act_name] = derived
+
+    # UTP / AP: % always from recorded DONE ÷ TOTAL (ignore sheet % if wrong).
+    for act_name in TRUSTED_DONE_TOTAL_ACTIVITIES:
+        done = done_vals.get(act_name)
+        total = total_vals.get(act_name)
+        if done is not None and total is not None and float(total) != 0:
+            pct_vals[act_name] = round(float(done) / float(total) * 100, 2)
+        else:
+            pct_vals[act_name] = None
 
     return done_vals, total_vals, pct_vals
 
@@ -746,18 +756,19 @@ def _location_percent_for_date_block(
 ) -> dict[str, dict[str, float]]:
     """Map full location label → activity PERCENTAGE for one date block."""
     out: dict[str, dict[str, float]] = {}
-    for location, _done_row, _total_row, percent_row in location_blocks:
+    for location, done_row, total_row, percent_row in location_blocks:
         if group_filter or induk_grouped_only:
             group = _induk_group_name(location)
             if group_filter and group != group_filter:
                 continue
             if induk_grouped_only and not group:
                 continue
+        _done, _total, pct_vals = _location_block_values(
+            df, done_row, total_row, percent_row, act_cols
+        )
         bucket: dict[str, float] = {}
-        for act_name, col_idx in zip(ACTIVITIES, act_cols):
-            if col_idx >= len(df.columns):
-                continue
-            pct = _parse_percent(df.iloc[percent_row, col_idx])
+        for act_name in ACTIVITIES:
+            pct = pct_vals.get(act_name)
             if pct is not None:
                 bucket[act_name] = pct
         if bucket:
@@ -1149,16 +1160,12 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
     eq_cols = _equipment_cols(act_cols, len(df.columns))
     location_blocks = _iter_location_blocks(df, header_idx, location_col, progress_col)
 
-    # Other campuses stay mostly original; only fix incorrect DONE for
-    # Trunking / Lay Cable / Termination / Fiber Optic (= % × TOTAL).
-    derived_done_by_loc: dict[str, dict[str, float | None]] = {}
+    # Per-location values after DONE/% rules (UTP/AP %, Fiber DONE, etc.).
+    block_vals_by_loc: dict[str, tuple[dict, dict, dict]] = {}
     for location, done_row, total_row, percent_row in location_blocks:
-        done_vals, _tv, _pv = _location_block_values(
+        block_vals_by_loc[location] = _location_block_values(
             df, done_row, total_row, percent_row, act_cols
         )
-        derived_done_by_loc[location] = {
-            a: done_vals.get(a) for a in PCT_DERIVED_DONE_ACTIVITIES
-        }
 
     rows: list[dict[str, str]] = []
     current_location = ""
@@ -1190,21 +1197,28 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
             "Location": location_out,
             "Progress": progress_out,
         }
+        done_vals = total_vals = pct_vals = {}
+        if current_location in block_vals_by_loc:
+            done_vals, total_vals, pct_vals = block_vals_by_loc[current_location]
+
         for act_name, col_idx in zip(ACTIVITIES, act_cols):
             if progress_out == "DONE" and act_name in PCT_DERIVED_DONE_ROUND10:
                 row_data[act_name] = "N/A"
                 continue
-            if (
-                progress_out == "DONE"
-                and act_name in PCT_DERIVED_DONE_EXACT
-                and current_location in derived_done_by_loc
-            ):
-                derived = derived_done_by_loc[current_location].get(act_name)
+            if progress_out == "DONE" and act_name in PCT_DERIVED_DONE_EXACT:
+                derived = done_vals.get(act_name)
                 if derived is not None:
                     row_data[act_name] = _display_activity_cell(
                         derived, act_name, "DONE"
                     )
                     continue
+            if (
+                progress_out == "PERCENTAGE"
+                and act_name in TRUSTED_DONE_TOTAL_ACTIVITIES
+            ):
+                pct = pct_vals.get(act_name)
+                row_data[act_name] = f"{pct:.2f}%" if pct is not None else "N/A"
+                continue
             val = df.iloc[r, col_idx] if col_idx < len(df.columns) else ""
             kind = loc_upper if is_summary else progress_out
             row_data[act_name] = _display_activity_cell(val, act_name, kind)
