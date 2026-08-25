@@ -182,16 +182,14 @@ def load_data() -> dict[str, dict]:
     return parsed
 
 
-def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str]:
+def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str | None]:
     """
-    Compare latest vs previous date for one activity.
-    Returns (delta_text_for_st.metric, caption_change_detail).
-    Caption format:
-      (prev date)(prev data) → (new date)(new data)
-      how much it differs
+    Compare latest vs previous date.
+    Returns (delta for st.metric, optional one-line caption).
+    Caption only when values exist; skips noisy 'no change' text.
     """
     if overall is None or len(overall) < 2:
-        return None, "No previous date to compare"
+        return None, None
 
     latest = overall.iloc[-1]
     prev = overall.iloc[-2]
@@ -204,25 +202,22 @@ def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str
         t0 = prev.get(f"{act}__total")
         t1 = latest.get(f"{act}__total")
         if any(v is None or (isinstance(v, float) and pd.isna(v)) for v in (d0, d1, t0, t1)):
-            return None, f"({prev_date})(N/A) → ({latest_date})(N/A)\nN/A"
+            return None, None
         d0, d1, t0, t1 = int(d0), int(d1), int(t0), int(t1)
         delta_done = d1 - d0
-        sign = "+" if delta_done > 0 else ""
-        line1 = f"({prev_date})({d0}/{t0}) → ({latest_date})({d1}/{t1})"
-        line2 = f"{sign}{delta_done} done" if delta_done != 0 else "no change"
-        delta = f"{sign}{delta_done}" if delta_done != 0 else "0"
-        return delta, f"{line1}\n{line2}"
+        delta = f"{delta_done:+d}" if delta_done != 0 else "0"
+        # One quiet line: prev → latest (delta pill already shows the difference)
+        caption = f"{prev_date} {d0}/{t0} → {latest_date} {d1}/{t1}"
+        return delta, caption
 
     v0 = prev.get(act)
     v1 = latest.get(act)
     if v0 is None or v1 is None or pd.isna(v0) or pd.isna(v1):
-        return None, f"({prev_date})(N/A) → ({latest_date})(N/A)\nN/A"
+        return None, None
     diff = float(v1) - float(v0)
-    sign = "+" if diff > 0 else ""
-    line1 = f"({prev_date})({float(v0):.1f}%) → ({latest_date})({float(v1):.1f}%)"
-    line2 = f"{sign}{diff:.1f}%" if abs(diff) > 1e-9 else "no change"
-    delta = f"{sign}{diff:.1f}%"
-    return delta, f"{line1}\n{line2}"
+    delta = f"{diff:+.1f}%"
+    caption = f"{prev_date} {float(v0):.1f}% → {latest_date} {float(v1):.1f}%"
+    return delta, caption
 
 
 def render_activity_average_panel(overall: pd.DataFrame, title: str):
@@ -236,11 +231,9 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
     prev_date = str(overall.iloc[-2].get("Date", "")) if len(overall) >= 2 else None
     st.subheader(title)
     if prev_date:
-        st.caption(
-            f"Change notes compare **{latest_date}** with previous date **{prev_date}**."
-        )
+        st.caption(f"Compared with previous date · {prev_date} → {latest_date}")
     else:
-        st.caption(f"Latest date: **{latest_date}** (no previous date yet).")
+        st.caption(f"Latest · {latest_date}")
 
     metric_cols = st.columns(4)
     for i, act in enumerate(ACTIVITIES):
@@ -260,8 +253,8 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
         delta, detail = _metric_delta_note(overall, act)
         with metric_cols[i % 4]:
             st.metric(act, display, delta=delta)
-            for line in detail.split("\n"):
-                st.caption(line)
+            if detail:
+                st.caption(detail)
 
     date_order = overall["Date"].tolist()
     fig = go.Figure()
