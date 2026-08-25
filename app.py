@@ -230,15 +230,9 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
         return
 
     latest = overall.iloc[-1]
-    latest_date = str(latest.get("Date", ""))
-    prev_date = str(overall.iloc[-2].get("Date", "")) if len(overall) >= 2 else None
     st.subheader(title)
-    if prev_date:
-        st.caption(f"Deltas vs previous date · {prev_date} → {latest_date}")
-    else:
-        st.caption(f"Latest · {latest_date}")
 
-    metric_cols = st.columns(4)
+    metric_cols = st.columns(len(ACTIVITIES))
     for i, act in enumerate(ACTIVITIES):
         if act in FRACTION_METRIC_ACTIVITIES:
             done = latest.get(f"{act}__done")
@@ -254,7 +248,7 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
             display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
 
         delta, detail = _metric_delta_note(overall, act)
-        with metric_cols[i % 4]:
+        with metric_cols[i]:
             st.metric(act, display, delta=delta)
             if detail:
                 st.caption(detail)
