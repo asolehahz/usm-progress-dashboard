@@ -781,7 +781,7 @@ def location_change_summary(
     Rows where a location's activity % changed between two dates.
 
     Columns: Location, Item, <prev>, <latest>, Change
-    Latest value is marked with 🟨 when it differs; Change uses ↑ / ↓.
+    Change uses ↑ / ↓ for increases / decreases.
     """
     empty = pd.DataFrame(columns=["Location", "Item", "Change"])
     if df is None or df.empty or not prev_date or not latest_date:
@@ -846,7 +846,7 @@ def location_change_summary(
                     "Location": _friendly_location_label(location),
                     "Item": act,
                     prev_col: f"{v0:.0f}%",
-                    latest_col: f"🟨 {v1:.0f}%",
+                    latest_col: f"{v1:.0f}%",
                     "Change": f"{arrow} {abs(diff):.0f}%",
                 }
             )

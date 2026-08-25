@@ -328,8 +328,7 @@ def render_change_summary(summary: pd.DataFrame, prev_date: str, latest_date: st
         )
         return
     st.caption(
-        f"Comparing {_short_date_caption(prev_date)} → {_short_date_caption(latest_date)}. "
-        "🟨 marks the newer value."
+        f"Comparing {_short_date_caption(prev_date)} → {_short_date_caption(latest_date)}."
     )
     st.dataframe(summary, width="stretch", hide_index=True)
 
