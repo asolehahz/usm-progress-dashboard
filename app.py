@@ -184,16 +184,15 @@ def load_data() -> dict[str, dict]:
 
 def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str | None]:
     """
-    Compare latest vs previous date.
-    Returns (delta for st.metric, optional one-line caption).
-    Caption only when values exist; skips noisy 'no change' text.
+    Option B: metric + delta pill; caption only when there is a change.
+    Fractions: caption shows how much DONE increased (e.g. +20 done since 08/23).
+    Percent activities: caption like +1.5% since 08/23.
     """
     if overall is None or len(overall) < 2:
         return None, None
 
     latest = overall.iloc[-1]
     prev = overall.iloc[-2]
-    latest_date = str(latest.get("Date", ""))
     prev_date = str(prev.get("Date", ""))
 
     if act in FRACTION_METRIC_ACTIVITIES:
@@ -203,11 +202,13 @@ def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str
         t1 = latest.get(f"{act}__total")
         if any(v is None or (isinstance(v, float) and pd.isna(v)) for v in (d0, d1, t0, t1)):
             return None, None
-        d0, d1, t0, t1 = int(d0), int(d1), int(t0), int(t1)
+        d0, d1 = int(d0), int(d1)
         delta_done = d1 - d0
         delta = f"{delta_done:+d}" if delta_done != 0 else "0"
-        # One quiet line: prev → latest (delta pill already shows the difference)
-        caption = f"{prev_date} {d0}/{t0} → {latest_date} {d1}/{t1}"
+        if delta_done == 0:
+            return delta, None
+        # Show increase amount clearly for fraction metrics
+        caption = f"{delta_done:+d} done since {prev_date} ({d0} → {d1})"
         return delta, caption
 
     v0 = prev.get(act)
@@ -216,7 +217,9 @@ def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str
         return None, None
     diff = float(v1) - float(v0)
     delta = f"{diff:+.1f}%"
-    caption = f"{prev_date} {float(v0):.1f}% → {latest_date} {float(v1):.1f}%"
+    if abs(diff) < 1e-9:
+        return delta, None
+    caption = f"{diff:+.1f}% since {prev_date}"
     return delta, caption
 
 
@@ -231,7 +234,7 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
     prev_date = str(overall.iloc[-2].get("Date", "")) if len(overall) >= 2 else None
     st.subheader(title)
     if prev_date:
-        st.caption(f"Compared with previous date · {prev_date} → {latest_date}")
+        st.caption(f"Deltas vs previous date · {prev_date} → {latest_date}")
     else:
         st.caption(f"Latest · {latest_date}")
 
