@@ -186,6 +186,9 @@ def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str
     """
     Compare latest vs previous date for one activity.
     Returns (delta_text_for_st.metric, caption_change_detail).
+    Caption format:
+      (prev date)(prev data) → (new date)(new data)
+      how much it differs
     """
     if overall is None or len(overall) < 2:
         return None, "No previous date to compare"
@@ -201,24 +204,25 @@ def _metric_delta_note(overall: pd.DataFrame, act: str) -> tuple[str | None, str
         t0 = prev.get(f"{act}__total")
         t1 = latest.get(f"{act}__total")
         if any(v is None or (isinstance(v, float) and pd.isna(v)) for v in (d0, d1, t0, t1)):
-            return None, f"vs {prev_date} → {latest_date}: N/A"
+            return None, f"({prev_date})(N/A) → ({latest_date})(N/A)\nN/A"
         d0, d1, t0, t1 = int(d0), int(d1), int(t0), int(t1)
         delta_done = d1 - d0
         sign = "+" if delta_done > 0 else ""
-        detail = f"vs {prev_date} → {latest_date}: {d0}/{t0} → {d1}/{t1} ({sign}{delta_done} done)"
-        # st.metric delta: show change in done count
+        line1 = f"({prev_date})({d0}/{t0}) → ({latest_date})({d1}/{t1})"
+        line2 = f"{sign}{delta_done} done" if delta_done != 0 else "no change"
         delta = f"{sign}{delta_done}" if delta_done != 0 else "0"
-        return delta, detail
+        return delta, f"{line1}\n{line2}"
 
     v0 = prev.get(act)
     v1 = latest.get(act)
     if v0 is None or v1 is None or pd.isna(v0) or pd.isna(v1):
-        return None, f"vs {prev_date} → {latest_date}: N/A"
+        return None, f"({prev_date})(N/A) → ({latest_date})(N/A)\nN/A"
     diff = float(v1) - float(v0)
     sign = "+" if diff > 0 else ""
+    line1 = f"({prev_date})({float(v0):.1f}%) → ({latest_date})({float(v1):.1f}%)"
+    line2 = f"{sign}{diff:.1f}%" if abs(diff) > 1e-9 else "no change"
     delta = f"{sign}{diff:.1f}%"
-    detail = f"vs {prev_date} → {latest_date}: {float(v0):.1f}% → {float(v1):.1f}% ({sign}{diff:.1f} pp)"
-    return delta, detail
+    return delta, f"{line1}\n{line2}"
 
 
 def render_activity_average_panel(overall: pd.DataFrame, title: str):
@@ -256,7 +260,8 @@ def render_activity_average_panel(overall: pd.DataFrame, title: str):
         delta, detail = _metric_delta_note(overall, act)
         with metric_cols[i % 4]:
             st.metric(act, display, delta=delta)
-            st.caption(detail)
+            for line in detail.split("\n"):
+                st.caption(line)
 
     date_order = overall["Date"].tolist()
     fig = go.Figure()
