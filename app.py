@@ -30,6 +30,7 @@ from lib.data_parser import (
     induk_grouped_snapshot,
     location_change_summary,
     parse_progress_sheet,
+    style_full_daily_complete_rows,
 )
 from lib.sheets_client import (
     append_history_row,
@@ -443,18 +444,23 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
                 "Full shows every building location."
             ),
         )
-        if view_mode.startswith("Accumulated"):
-            snapshot = induk_grouped_snapshot(raw_df, selected_date)
-        else:
+        use_full_view = not view_mode.startswith("Accumulated")
+        if use_full_view:
             snapshot = campus_date_snapshot(raw_df, selected_date, campus=campus)
+        else:
+            snapshot = induk_grouped_snapshot(raw_df, selected_date)
     else:
+        use_full_view = True
         snapshot = campus_date_snapshot(raw_df, selected_date, campus=campus)
 
     st.subheader(f"Sheet data for {selected_date}")
     if snapshot.empty:
         st.info("No DONE/TOTAL/PERCENTAGE rows found for this date.")
     else:
-        st.dataframe(snapshot, width="stretch", hide_index=True)
+        display = (
+            style_full_daily_complete_rows(snapshot) if use_full_view else snapshot
+        )
+        st.dataframe(display, width="stretch", hide_index=True)
 
 
 def render_issues():

@@ -1230,11 +1230,67 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
     return pd.DataFrame(rows)
 
 
+def style_full_daily_complete_rows(snapshot: pd.DataFrame):
+    """
+    Full daily table: if every activity on a location's PERCENTAGE row is 100%,
+    paint that whole PERCENTAGE row green and the location name (DONE row) green.
+    """
+    if snapshot is None or snapshot.empty:
+        return snapshot
+
+    act_cols = [c for c in ACTIVITIES if c in snapshot.columns]
+    if not act_cols:
+        return snapshot
+
+    styles = pd.DataFrame("", index=snapshot.index, columns=snapshot.columns)
+    green_row = "background-color: #C8E6C9; color: #1B5E20"
+    green_loc = "background-color: #C8E6C9; color: #1B5E20; font-weight: 700"
+
+    # Map location → DONE row index; check each PERCENTAGE row.
+    current_loc = ""
+    done_idx_by_loc: dict[str, object] = {}
+
+    for idx, row in snapshot.iterrows():
+        loc = str(row.get("Location", "") or "").strip()
+        prog = str(row.get("Progress", "") or "").strip().upper()
+        if prog == "DONE" and loc:
+            current_loc = loc
+            done_idx_by_loc[loc] = idx
+            continue
+        if prog != "PERCENTAGE" or not current_loc:
+            continue
+
+        pcts: list[float] = []
+        all_hundred = True
+        for col in act_cols:
+            raw = str(row.get(col, "") or "").strip()
+            if not raw or raw.upper() == "N/A":
+                all_hundred = False
+                break
+            num = _parse_percent(raw)
+            if num is None or abs(num - 100.0) > 0.05:
+                all_hundred = False
+                break
+            pcts.append(num)
+
+        if not all_hundred or len(pcts) != len(act_cols):
+            continue
+
+        for col in snapshot.columns:
+            styles.at[idx, col] = green_row
+        done_idx = done_idx_by_loc.get(current_loc)
+        if done_idx is not None and "Location" in styles.columns:
+            styles.at[done_idx, "Location"] = green_loc
+
+    return snapshot.style.apply(lambda _: styles, axis=None)
+
+
 __all__ = [
     "LocationProgress",
     "available_dates",
     "campus_date_snapshot",
     "induk_grouped_snapshot",
+    "style_full_daily_complete_rows",
     "get_campus_overall",
     "get_induk_desa_overall",
     "induk_desa_building_increases",
