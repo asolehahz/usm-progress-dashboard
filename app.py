@@ -42,7 +42,6 @@ from lib.sheets_client import (
     fetch_issues,
     fetch_work_plan,
     sync_details_sheet,
-    update_details_fields,
     update_issue_status,
 )
 from lib.work_plan import build_work_plan_view, work_plan_dates
@@ -520,17 +519,18 @@ def render_location_details(parsed: dict[str, dict]):
     st.header("Location Details")
     st.caption(
         "Remarks and critical flag per building. Progress is based on the latest "
-        "daily progress data (Completed / In Progress / Not Started)."
+        "daily progress data (Completed / In Progress / Not Started). "
+        "Admin can edit on this page — changes are saved to the DETAILS sheet."
     )
 
     details = fetch_details()
     view = merge_details_with_progress(details, parsed, include_missing_locations=True)
 
-    tab_view, tab_admin = st.tabs(["View", "Admin — edit / sync"])
+    tab_view, tab_admin = st.tabs(["View", "Admin — edit"])
 
     with tab_view:
         if view.empty:
-            st.info("No locations found yet. Use Admin to sync locations from progress data.")
+            st.info("No locations found yet. Use Admin to sync / edit.")
         else:
             campuses = sorted(view["Campus"].dropna().unique().tolist())
             f1, f2, f3 = st.columns(3)
@@ -558,7 +558,6 @@ def render_location_details(parsed: dict[str, dict]):
                 & view["Progress"].isin(progress_filter)
                 & view["Critical"].isin(critical_filter)
             ].copy()
-            # Re-number after filter
             if not filtered.empty:
                 filtered["#"] = range(1, len(filtered) + 1)
 
@@ -581,88 +580,67 @@ def render_location_details(parsed: dict[str, dict]):
             )
 
     with tab_admin:
-        st.warning("Admin only — saves Critical / Remarks and syncs locations.")
+        st.caption("Edit **Critical** and **Remarks** below, then click Save — updates the DETAILS sheet.")
         if not admin_login_form():
             st.stop()
 
-        st.subheader("Sync all locations into DETAILS sheet")
-        st.caption(
-            "Creates / updates rows for every campus location from progress data. "
-            "Existing Critical and Remarks values are kept."
+        if view.empty:
+            st.info("No locations from progress data yet.")
+            return
+
+        edit_df = view[["Campus", "Location", "Critical", "Remarks", "Progress"]].copy()
+        edit_df["Critical"] = edit_df["Critical"].map(
+            lambda v: True if str(v).strip() == "Critical" else False
         )
-        if st.button("Sync locations now", type="primary", key="sync_details_btn"):
-            synced = merge_details_with_progress(
-                details, parsed, include_missing_locations=True
+
+        edited = st.data_editor(
+            edit_df,
+            width="stretch",
+            hide_index=True,
+            num_rows="fixed",
+            disabled=["Campus", "Location", "Progress"],
+            column_config={
+                "Campus": st.column_config.TextColumn("Campus", width="medium"),
+                "Location": st.column_config.TextColumn("Location", width="large"),
+                "Critical": st.column_config.CheckboxColumn(
+                    "Critical",
+                    help="Tick if this location is critical (shown in red on View).",
+                    default=False,
+                ),
+                "Remarks": st.column_config.TextColumn(
+                    "Remarks",
+                    help="Notes about this building.",
+                    width="large",
+                ),
+                "Progress": st.column_config.TextColumn(
+                    "Progress",
+                    help="Auto from daily progress — not editable.",
+                    width="medium",
+                ),
+            },
+            key="details_data_editor",
+        )
+
+        col_a, col_b = st.columns([1, 2])
+        with col_a:
+            save = st.button("Save to DETAILS sheet", type="primary", key="details_save_all")
+        with col_b:
+            st.caption("Progress stays auto-calculated; only Critical + Remarks are written.")
+
+        if save:
+            to_save = edited.copy()
+            to_save["Critical"] = to_save["Critical"].map(
+                lambda v: "Critical" if bool(v) else "Not Critical"
             )
-            rows = details_rows_for_sheet(synced)
+            rows = details_rows_for_sheet(to_save)
             if sync_details_sheet(rows):
-                st.success(f"Synced {len(rows) - 1} locations to DETAILS sheet.")
+                st.success(f"Saved {len(rows) - 1} locations to DETAILS sheet.")
                 st.rerun()
             else:
                 st.error(
                     "Could not write to DETAILS. Add a Google service account to "
-                    "Streamlit secrets (same as Daily History / Issues)."
+                    "Streamlit secrets (Editor access on the spreadsheet)."
                 )
-
-        st.subheader("Edit location")
-        if view.empty:
-            st.info("Sync locations first.")
-        else:
-            labels = [
-                f"{row['Campus']} · {row['Location']}" for _, row in view.iterrows()
-            ]
-            chosen = st.selectbox("Location", options=labels, key="details_edit_pick")
-            campus_name, location_name = chosen.split(" · ", 1)
-            current = view[
-                (view["Campus"] == campus_name) & (view["Location"] == location_name)
-            ].iloc[0]
-
-            st.write(f"**Progress (from daily data):** {current['Progress']}")
-            is_critical = st.checkbox(
-                "Critical",
-                value=str(current["Critical"]) == "Critical",
-                key="details_edit_critical",
-            )
-            remarks = st.text_area(
-                "Remarks",
-                value=str(current.get("Remarks", "") or ""),
-                height=120,
-                key="details_edit_remarks",
-            )
-            if st.button("Save changes", key="details_save_btn"):
-                critical_val = "Critical" if is_critical else "Not Critical"
-                # Ensure row exists: sync first if missing from sheet
-                sheet_has = (
-                    not details.empty
-                    and (
-                        (details["Campus"] == campus_name)
-                        & (details["Location"] == location_name)
-                    ).any()
-                )
-                if not sheet_has:
-                    synced = merge_details_with_progress(
-                        details, parsed, include_missing_locations=True
-                    )
-                    synced.loc[
-                        (synced["Campus"] == campus_name)
-                        & (synced["Location"] == location_name),
-                        ["Critical", "Remarks"],
-                    ] = [critical_val, remarks]
-                    if sync_details_sheet(details_rows_for_sheet(synced)):
-                        st.success("Saved (sheet was synced with this location).")
-                        st.rerun()
-                    else:
-                        st.error("Could not save. Check service account access.")
-                elif update_details_fields(
-                    campus_name,
-                    location_name,
-                    critical=critical_val,
-                    remarks=remarks,
-                ):
-                    st.success("Saved.")
-                    st.rerun()
-                else:
-                    st.error("Could not update DETAILS. Check service account access.")
 
 
 def render_issues():
