@@ -32,13 +32,17 @@ from lib.data_parser import (
     parse_progress_sheet,
     style_full_daily_complete_rows,
 )
+from lib.details import details_rows_for_sheet, merge_details_with_progress
 from lib.sheets_client import (
     append_history_row,
     append_issue_row,
     fetch_all_tabs,
+    fetch_details,
     fetch_history,
     fetch_issues,
     fetch_work_plan,
+    sync_details_sheet,
+    update_details_fields,
     update_issue_status,
 )
 from lib.work_plan import build_work_plan_view, work_plan_dates
@@ -499,6 +503,168 @@ def render_work_plan_vs_actual(parsed: dict[str, dict]):
     st.dataframe(table, width="stretch", hide_index=True)
 
 
+def _style_details_critical(df: pd.DataFrame):
+    """Highlight Critical rows in red."""
+    if df is None or df.empty or "Critical" not in df.columns:
+        return df
+    styles = pd.DataFrame("", index=df.index, columns=df.columns)
+    red = "background-color: #FFCDD2; color: #B71C1C"
+    for idx, row in df.iterrows():
+        if str(row.get("Critical", "")).strip() == "Critical":
+            for col in df.columns:
+                styles.at[idx, col] = red
+    return df.style.apply(lambda _: styles, axis=None)
+
+
+def render_location_details(parsed: dict[str, dict]):
+    st.header("Location Details")
+    st.caption(
+        "Remarks and critical flag per building. Progress is based on the latest "
+        "daily progress data (Completed / In Progress / Not Started)."
+    )
+
+    details = fetch_details()
+    view = merge_details_with_progress(details, parsed, include_missing_locations=True)
+
+    tab_view, tab_admin = st.tabs(["View", "Admin — edit / sync"])
+
+    with tab_view:
+        if view.empty:
+            st.info("No locations found yet. Use Admin to sync locations from progress data.")
+        else:
+            campuses = sorted(view["Campus"].dropna().unique().tolist())
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                campus_filter = st.multiselect(
+                    "Campus", options=campuses, default=campuses, key="details_campus_f"
+                )
+            with f2:
+                progress_filter = st.multiselect(
+                    "Progress",
+                    options=["Completed", "In Progress", "Not Started"],
+                    default=["Completed", "In Progress", "Not Started"],
+                    key="details_progress_f",
+                )
+            with f3:
+                critical_filter = st.multiselect(
+                    "Critical",
+                    options=["Critical", "Not Critical"],
+                    default=["Critical", "Not Critical"],
+                    key="details_critical_f",
+                )
+
+            filtered = view[
+                view["Campus"].isin(campus_filter)
+                & view["Progress"].isin(progress_filter)
+                & view["Critical"].isin(critical_filter)
+            ].copy()
+            # Re-number after filter
+            if not filtered.empty:
+                filtered["#"] = range(1, len(filtered) + 1)
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Locations", len(filtered))
+            c2.metric(
+                "Critical",
+                int((filtered["Critical"] == "Critical").sum()) if not filtered.empty else 0,
+            )
+            c3.metric(
+                "Completed",
+                int((filtered["Progress"] == "Completed").sum()) if not filtered.empty else 0,
+            )
+
+            display_cols = ["#", "Campus", "Location", "Critical", "Remarks", "Progress"]
+            st.dataframe(
+                _style_details_critical(filtered[display_cols]),
+                width="stretch",
+                hide_index=True,
+            )
+
+    with tab_admin:
+        st.warning("Admin only — saves Critical / Remarks and syncs locations.")
+        if not admin_login_form():
+            st.stop()
+
+        st.subheader("Sync all locations into DETAILS sheet")
+        st.caption(
+            "Creates / updates rows for every campus location from progress data. "
+            "Existing Critical and Remarks values are kept."
+        )
+        if st.button("Sync locations now", type="primary", key="sync_details_btn"):
+            synced = merge_details_with_progress(
+                details, parsed, include_missing_locations=True
+            )
+            rows = details_rows_for_sheet(synced)
+            if sync_details_sheet(rows):
+                st.success(f"Synced {len(rows) - 1} locations to DETAILS sheet.")
+                st.rerun()
+            else:
+                st.error(
+                    "Could not write to DETAILS. Add a Google service account to "
+                    "Streamlit secrets (same as Daily History / Issues)."
+                )
+
+        st.subheader("Edit location")
+        if view.empty:
+            st.info("Sync locations first.")
+        else:
+            labels = [
+                f"{row['Campus']} · {row['Location']}" for _, row in view.iterrows()
+            ]
+            chosen = st.selectbox("Location", options=labels, key="details_edit_pick")
+            campus_name, location_name = chosen.split(" · ", 1)
+            current = view[
+                (view["Campus"] == campus_name) & (view["Location"] == location_name)
+            ].iloc[0]
+
+            st.write(f"**Progress (from daily data):** {current['Progress']}")
+            is_critical = st.checkbox(
+                "Critical",
+                value=str(current["Critical"]) == "Critical",
+                key="details_edit_critical",
+            )
+            remarks = st.text_area(
+                "Remarks",
+                value=str(current.get("Remarks", "") or ""),
+                height=120,
+                key="details_edit_remarks",
+            )
+            if st.button("Save changes", key="details_save_btn"):
+                critical_val = "Critical" if is_critical else "Not Critical"
+                # Ensure row exists: sync first if missing from sheet
+                sheet_has = (
+                    not details.empty
+                    and (
+                        (details["Campus"] == campus_name)
+                        & (details["Location"] == location_name)
+                    ).any()
+                )
+                if not sheet_has:
+                    synced = merge_details_with_progress(
+                        details, parsed, include_missing_locations=True
+                    )
+                    synced.loc[
+                        (synced["Campus"] == campus_name)
+                        & (synced["Location"] == location_name),
+                        ["Critical", "Remarks"],
+                    ] = [critical_val, remarks]
+                    if sync_details_sheet(details_rows_for_sheet(synced)):
+                        st.success("Saved (sheet was synced with this location).")
+                        st.rerun()
+                    else:
+                        st.error("Could not save. Check service account access.")
+                elif update_details_fields(
+                    campus_name,
+                    location_name,
+                    critical=critical_val,
+                    remarks=remarks,
+                ):
+                    st.success("Saved.")
+                    st.rerun()
+                else:
+                    st.error("Could not update DETAILS. Check service account access.")
+
+
 def render_issues():
     st.header("Issue & Risk")
     st.caption("Public can view. Only admin can add entries or change Open/Close status.")
@@ -711,6 +877,10 @@ def page_work_plan():
     render_work_plan_vs_actual(_load_or_fail())
 
 
+def page_location_details():
+    render_location_details(_load_or_fail())
+
+
 def page_issues():
     render_issues()
 
@@ -731,6 +901,7 @@ def main():
         fetch_history.clear()
         fetch_issues.clear()
         fetch_work_plan.clear()
+        fetch_details.clear()
         st.rerun()
 
     nav = st.navigation(
@@ -742,6 +913,12 @@ def main():
                     title="Work Plan vs Actual",
                     icon="📋",
                     url_path="work-plan",
+                ),
+                st.Page(
+                    page_location_details,
+                    title="Location Details",
+                    icon="📍",
+                    url_path="location-details",
                 ),
             ],
             "Check Daily Data": list(CAMPUS_PAGES.values()),

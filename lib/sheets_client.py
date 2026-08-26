@@ -9,6 +9,9 @@ import pandas as pd
 import streamlit as st
 
 from config import (
+    DETAILS_COLUMNS,
+    DETAILS_GID,
+    DETAILS_TAB_NAME,
     HISTORY_COLUMNS,
     HISTORY_GID,
     HISTORY_TAB_NAME,
@@ -184,6 +187,122 @@ def fetch_work_plan() -> pd.DataFrame:
             pass
 
     return pd.DataFrame(columns=WORK_PLAN_COLUMNS)
+
+
+def _parse_details_df(raw: pd.DataFrame) -> pd.DataFrame:
+    from lib.details import parse_details
+
+    return parse_details(raw)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_details() -> pd.DataFrame:
+    """Load DETAILS tab."""
+    if DETAILS_GID:
+        try:
+            return _parse_details_df(fetch_csv(DETAILS_GID))
+        except Exception:
+            pass
+
+    client = _get_gspread_client()
+    if client:
+        try:
+            spreadsheet = client.open_by_key(SHEET_ID)
+            worksheet = spreadsheet.worksheet(DETAILS_TAB_NAME)
+            return _parse_details_df(pd.DataFrame(worksheet.get_all_values()))
+        except Exception:
+            pass
+
+    return pd.DataFrame(columns=DETAILS_COLUMNS)
+
+
+def sync_details_sheet(rows: list[list[str]]) -> bool:
+    """
+    Replace DETAILS sheet contents with header + data rows.
+    Requires service account in Streamlit secrets.
+    """
+    client = _get_gspread_client()
+    if not client:
+        return False
+
+    spreadsheet = client.open_by_key(SHEET_ID)
+    try:
+        worksheet = spreadsheet.worksheet(DETAILS_TAB_NAME)
+    except Exception:
+        worksheet = spreadsheet.add_worksheet(
+            title=DETAILS_TAB_NAME,
+            rows=max(1000, len(rows) + 10),
+            cols=len(rows[0]) if rows else 5,
+        )
+
+    worksheet.clear()
+    if rows:
+        # gspread: update starting at A1
+        worksheet.update(range_name="A1", values=rows, value_input_option="USER_ENTERED")
+    fetch_csv.clear()
+    fetch_details.clear()
+    return True
+
+
+def update_details_fields(
+    campus: str, location: str, *, critical: str, remarks: str
+) -> bool:
+    """Update Critical / Remarks for one location row. Requires service account."""
+    client = _get_gspread_client()
+    if not client:
+        return False
+
+    try:
+        spreadsheet = client.open_by_key(SHEET_ID)
+        worksheet = spreadsheet.worksheet(DETAILS_TAB_NAME)
+    except Exception:
+        return False
+
+    values = worksheet.get_all_values()
+    if not values:
+        return False
+
+    # Find header row that contains Campus + Location
+    header_idx = None
+    header: list[str] = []
+    for i, row in enumerate(values[:5]):
+        cells = [str(c).strip().lower() for c in row]
+        if "campus" in cells and "location" in cells:
+            header_idx = i
+            header = [str(c).strip() for c in row]
+            break
+    if header_idx is None:
+        return False
+
+    col_campus = col_location = col_critical = col_remarks = None
+    for idx, name in enumerate(header):
+        low = name.lower()
+        if low == "campus":
+            col_campus = idx
+        elif low == "location":
+            col_location = idx
+        elif "critical" in low:
+            col_critical = idx
+        elif "remark" in low:
+            col_remarks = idx
+
+    if col_campus is None or col_location is None:
+        return False
+
+    campus_t = str(campus).strip()
+    location_t = str(location).strip()
+    for i, row in enumerate(values[header_idx + 1 :], start=header_idx + 2):
+        c = str(row[col_campus]).strip() if len(row) > col_campus else ""
+        loc = str(row[col_location]).strip() if len(row) > col_location else ""
+        if c == campus_t and loc == location_t:
+            if col_critical is not None:
+                worksheet.update_cell(i, col_critical + 1, critical)
+            if col_remarks is not None:
+                worksheet.update_cell(i, col_remarks + 1, remarks)
+            fetch_csv.clear()
+            fetch_details.clear()
+            return True
+    return False
 
 
 def append_issue_row(row: dict[str, Any]) -> bool:

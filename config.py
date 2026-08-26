@@ -122,6 +122,16 @@ WORK_PLAN_COLUMNS = [
     "Reported_changes",
 ]
 
+DETAILS_TAB_NAME = "DETAILS"
+DETAILS_GID = "1679878618"
+DETAILS_COLUMNS = [
+    "Campus",
+    "Location",
+    "Critical",
+    "Remarks",
+    "Progress",
+]
+
 CACHE_TTL_SECONDS = 300
 
 # INDUK-only: locations rolled up into these desa groups.
