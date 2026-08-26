@@ -6,7 +6,7 @@ import re
 
 import pandas as pd
 
-from config import ACTIVITIES, WORK_PLAN_COLUMNS
+from app_config import ACTIVITIES, WORK_PLAN_COLUMNS
 from lib.data_parser import (
     _normalize_date_label,
     _parse_date_key,

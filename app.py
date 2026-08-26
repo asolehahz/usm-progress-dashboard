@@ -11,7 +11,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from config import (
+from app_config import (
     ACTIVITIES,
     CAMPUS_ICONS,
     DASHBOARD_CHART_ACTIVITIES,

@@ -8,7 +8,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from config import (
+from app_config import (
     DETAILS_COLUMNS,
     DETAILS_GID,
     DETAILS_TAB_NAME,

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from config import (
+from app_config import (
     ACTIVITIES,
     ACTIVE_EQUIPMENT,
     CAMPUS_ICONS,
