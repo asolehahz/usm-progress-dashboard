@@ -10,3 +10,5 @@ sheet_html.txt
 
 # Never include Django / parent project files
 ../
+
+_tmp_sheets/
