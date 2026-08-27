@@ -280,46 +280,50 @@ def render_activity_average_panel(
             with metric_cols[j]:
                 st.metric(act, display, delta=delta)
 
-    # Chart hidden for now — set True to show again.
-    show_dashboard_chart = False
-    if show_dashboard_chart:
-        date_order = overall["Date"].tolist()
-        fig = go.Figure()
-        for i, act in enumerate(DASHBOARD_CHART_ACTIVITIES):
-            if act in overall.columns:
-                fig.add_trace(
-                    go.Scatter(
-                        x=overall["Date"],
-                        y=overall[act],
-                        mode="lines+markers",
-                        name=act,
-                        line=dict(
-                            color=ACTIVITY_COLORS.get(act, CHART_COLORS[i % len(CHART_COLORS)]),
-                            width=2,
-                        ),
-                        marker=dict(size=6),
-                        connectgaps=False,
-                    )
+
+def render_dashboard_chart(overall: pd.DataFrame):
+    """Progress % line chart over dates (UTP / AP / Fiber)."""
+    if overall is None or overall.empty or "Date" not in overall.columns:
+        return
+
+    st.subheader("Progress over time")
+    date_order = overall["Date"].tolist()
+    fig = go.Figure()
+    for i, act in enumerate(DASHBOARD_CHART_ACTIVITIES):
+        if act in overall.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=overall["Date"],
+                    y=overall[act],
+                    mode="lines+markers",
+                    name=act,
+                    line=dict(
+                        color=ACTIVITY_COLORS.get(act, CHART_COLORS[i % len(CHART_COLORS)]),
+                        width=2,
+                    ),
+                    marker=dict(size=6),
+                    connectgaps=False,
                 )
-        fig.update_layout(
-            height=420,
-            xaxis_title="Date (mm/dd/yyyy)",
-            yaxis_title="Progress (%)",
-            yaxis_range=[0, 105],
-            xaxis=dict(
-                categoryorder="array",
-                categoryarray=date_order,
-                type="category",
-                tickangle=-30,
-            ),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02),
-            margin=dict(l=40, r=20, t=40, b=60),
-            paper_bgcolor="#FFFFFF",
-            plot_bgcolor="#FAFAFA",
-            font=dict(color="#4B2876"),
-            colorway=CHART_COLORS,
-        )
-        st.plotly_chart(fig, width="stretch")
+            )
+    fig.update_layout(
+        height=420,
+        xaxis_title="Date (mm/dd/yyyy)",
+        yaxis_title="Progress (%)",
+        yaxis_range=[0, 105],
+        xaxis=dict(
+            categoryorder="array",
+            categoryarray=date_order,
+            type="category",
+            tickangle=-30,
+        ),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        margin=dict(l=40, r=20, t=40, b=60),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FAFAFA",
+        font=dict(color="#4B2876"),
+        colorway=CHART_COLORS,
+    )
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_change_summary(summary: pd.DataFrame, prev_date: str, latest_date: str):
@@ -363,6 +367,7 @@ def render_dashboard(parsed: dict[str, dict]):
                 raw_df, prev_date, latest_date, group_filter=desa
             )
             render_change_summary(summary, prev_date, latest_date)
+        render_dashboard_chart(overall)
         return
 
     data = parsed.get(campus, {})
@@ -388,6 +393,7 @@ def render_dashboard(parsed: dict[str, dict]):
             induk_grouped_only=(campus == "INDUK"),
         )
         render_change_summary(summary, prev_date, latest_date)
+    render_dashboard_chart(overall)
 
 
 def _campus_page_runner(campus: str):
