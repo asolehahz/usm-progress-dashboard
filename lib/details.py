@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from app_config import ACTIVITIES, DETAILS_COLUMNS, campus_sheet_names
+from lib.data_parser import available_dates, location_recalculated_percentages
 
 
 def parse_details(raw: pd.DataFrame) -> pd.DataFrame:
@@ -113,23 +114,18 @@ def _status_from_pct_map(pct_map: dict[str, float | None] | None) -> str:
 def location_progress_status_from_parsed(
     parsed: dict[str, dict], campus: str, location: str
 ) -> str:
-    """Completed / In Progress / Not Started from latest date in parsed locations."""
-    locations = parsed.get(campus, {}).get("locations") or []
-    loc_norm = str(location).strip().upper()
-    match = next(
-        (
-            loc
-            for loc in locations
-            if str(getattr(loc, "location", "")).strip().upper() == loc_norm
-        ),
-        None,
-    )
-    if match is None:
+    """Completed / In Progress / Not Started from recalculated latest daily data."""
+    raw_df = parsed.get(campus, {}).get("raw_df")
+    if raw_df is None or getattr(raw_df, "empty", True):
         return "Not Started"
-    latest = getattr(match, "latest_date", None)
-    if not latest:
+
+    dates = available_dates(raw_df, newest_first=False)
+    if not dates:
         return "Not Started"
-    return _status_from_pct_map(match.by_date.get(latest))
+
+    latest = dates[-1]
+    pct_map = location_recalculated_percentages(raw_df, latest, location)
+    return _status_from_pct_map(pct_map)
 
 
 def merge_details_with_progress(

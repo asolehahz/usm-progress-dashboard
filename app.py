@@ -537,9 +537,9 @@ def _style_details_critical(df: pd.DataFrame):
 def render_location_details(parsed: dict[str, dict]):
     st.header("Location Details")
     st.caption(
-        "Remarks and critical flag per building. Progress is based on the latest "
-        "daily progress data (Completed / In Progress / Not Started). "
-        "Admin can edit on this page — changes are saved to the DETAILS sheet."
+        "Remarks and critical flag per building. Progress uses recalculated daily "
+        "values (same rules as Check Daily Data), not raw sheet PERCENTAGE cells. "
+        "Admin can edit Critical and Remarks here — saved to the DETAILS sheet."
     )
 
     details = fetch_details()

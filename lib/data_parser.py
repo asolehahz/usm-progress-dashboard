@@ -1365,6 +1365,58 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
     return pd.DataFrame(rows)
 
 
+def location_recalculated_percentages(
+    df: pd.DataFrame,
+    date_str: str,
+    location: str,
+) -> dict[str, float | None] | None:
+    """
+    Recalculated activity % for one location on one date.
+
+    Uses the same rules as Check Daily Data (UTP/AP from DONE÷TOTAL, etc.).
+    """
+    if df is None or df.empty or not str(date_str).strip() or not str(location).strip():
+        return None
+
+    header_idx = _detect_header_row_index(df)
+    header_row = df.iloc[header_idx]
+    location_col, progress_col = _detect_location_progress_cols(header_row)
+    blocks = _find_date_blocks(header_row)
+    block_dates = _extract_dates_for_blocks(df, blocks)
+
+    date_str_norm = _normalize_date_label(date_str)
+    block_i = next(
+        (
+            i
+            for i, d in enumerate(block_dates)
+            if d == date_str
+            or d == date_str_norm
+            or _normalize_date_label(d) == date_str_norm
+        ),
+        None,
+    )
+    if block_i is None:
+        return None
+
+    _, act_cols = blocks[block_i]
+    location_blocks = _iter_location_blocks(
+        df, header_idx, location_col, progress_col
+    )
+    loc_norm = str(location).strip().upper()
+    match = next(
+        (block for block in location_blocks if str(block[0]).strip().upper() == loc_norm),
+        None,
+    )
+    if match is None:
+        return None
+
+    _, done_row, total_row, percent_row = match
+    _done, _total, pct_vals = _location_block_values(
+        df, done_row, total_row, percent_row, act_cols
+    )
+    return pct_vals
+
+
 def style_full_daily_complete_rows(snapshot: pd.DataFrame):
     """
     Full daily table: if every activity on a location's PERCENTAGE row is 100%,
@@ -1424,6 +1476,7 @@ __all__ = [
     "LocationProgress",
     "available_dates",
     "campus_date_snapshot",
+    "location_recalculated_percentages",
     "induk_grouped_snapshot",
     "style_full_daily_complete_rows",
     "get_campus_overall",
