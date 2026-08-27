@@ -276,6 +276,45 @@ def _lookup_location_changes(
     return {}
 
 
+def _build_campus_lookup(parsed: dict[str, dict]) -> dict[str, str]:
+    """Map normalized location keys → campus name from progress sheets."""
+    from lib.data_parser import (
+        _detect_header_row_index,
+        _detect_location_progress_cols,
+        _iter_location_blocks,
+    )
+
+    lookup: dict[str, str] = {}
+    for campus in campus_sheet_names():
+        raw_df = parsed.get(campus, {}).get("raw_df")
+        if raw_df is None or getattr(raw_df, "empty", True):
+            # Fallback: LocationProgress list from parse
+            for loc in parsed.get(campus, {}).get("locations") or []:
+                name = str(getattr(loc, "location", "") or "").strip()
+                if not name:
+                    continue
+                for key in _location_match_keys(name):
+                    lookup.setdefault(key, campus)
+            continue
+
+        header_idx = _detect_header_row_index(raw_df)
+        header_row = raw_df.iloc[header_idx]
+        location_col, progress_col = _detect_location_progress_cols(header_row)
+        for location, *_ in _iter_location_blocks(
+            raw_df, header_idx, location_col, progress_col
+        ):
+            for key in _location_match_keys(location):
+                lookup.setdefault(key, campus)
+    return lookup
+
+
+def _resolve_campus(plan_location: str, campus_lookup: dict[str, str]) -> str:
+    for key in _location_match_keys(plan_location):
+        if key in campus_lookup:
+            return campus_lookup[key]
+    return "—"
+
+
 def build_work_plan_view(
     plan: pd.DataFrame,
     parsed_or_induk: dict[str, dict] | pd.DataFrame,
@@ -288,7 +327,14 @@ def build_work_plan_view(
     backward compatibility.
     """
     empty = pd.DataFrame(
-        columns=["#", "Duration", "Location", "Type of work", "Reported changes"]
+        columns=[
+            "#",
+            "Campus",
+            "Duration",
+            "Location",
+            "Type of work",
+            "Reported changes",
+        ]
     )
     if plan is None or plan.empty or not selected_date:
         return empty, None
@@ -302,10 +348,12 @@ def build_work_plan_view(
     if day_rows.empty:
         return empty, None
 
+    campus_lookup: dict[str, str] = {}
     if isinstance(parsed_or_induk, dict):
         changes_by_key, prev_date = _collect_changes_across_campuses(
             parsed_or_induk, selected_date
         )
+        campus_lookup = _build_campus_lookup(parsed_or_induk)
     else:
         # Legacy: single campus dataframe (INDUK)
         induk_df = parsed_or_induk
@@ -314,11 +362,15 @@ def build_work_plan_view(
         if induk_df is not None and not getattr(induk_df, "empty", True) and prev_date:
             by_code = location_changes_by_building(induk_df, prev_date, selected_date)
             changes_by_key = _index_changes_by_location_keys(by_code, induk_df)
+        campus_lookup = {
+            k: "INDUK" for k in changes_by_key
+        }
 
     out_rows: list[dict[str, str]] = []
     for _, row in day_rows.iterrows():
         planned_acts = work_type_to_activities(row["Type_of_work"])
         reported = str(row.get("Reported_changes", "") or "").strip()
+        campus = _resolve_campus(str(row["Location"]), campus_lookup)
 
         if not reported:
             loc_changes = _lookup_location_changes(changes_by_key, row["Location"])
@@ -337,6 +389,7 @@ def build_work_plan_view(
 
         out_rows.append(
             {
+                "Campus": campus,
                 "Duration": str(row.get("Duration", "") or "").strip() or "—",
                 "Location": str(row.get("Location", "") or "").strip(),
                 "Type of work": str(row.get("Type_of_work", "") or "").strip(),
