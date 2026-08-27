@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from app_config import ACTIVITIES, DETAILS_COLUMNS, campus_sheet_names
+from app_config import ACTIVITIES, CRITICAL_LEVELS, DETAILS_COLUMNS, campus_sheet_names
 from lib.data_parser import available_dates, location_recalculated_percentages
 
 
@@ -73,6 +73,8 @@ def _normalize_critical(value: str) -> str:
     text = str(value or "").strip().lower()
     if text in {"critical", "yes", "y", "true", "1", "c"}:
         return "Critical"
+    if text in {"medium", "med", "m"}:
+        return "Medium"
     return "Not Critical"
 
 
@@ -183,7 +185,7 @@ def details_rows_for_sheet(view: pd.DataFrame) -> list[list[str]]:
     header = [
         "Campus",
         "Location",
-        "Critical / Not Critical",
+        "Critical / Medium / Not Critical",
         "Remarks",
         "Progress",
     ]

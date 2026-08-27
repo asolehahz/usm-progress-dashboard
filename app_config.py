@@ -131,6 +131,7 @@ DETAILS_COLUMNS = [
     "Remarks",
     "Progress",
 ]
+CRITICAL_LEVELS = ["Not Critical", "Medium", "Critical"]
 
 CACHE_TTL_SECONDS = 300
 

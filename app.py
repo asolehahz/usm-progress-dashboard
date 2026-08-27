@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 
 from app_config import (
     ACTIVITIES,
+    CRITICAL_LEVELS,
     CAMPUS_ICONS,
     DASHBOARD_CHART_ACTIVITIES,
     FRACTION_METRIC_ACTIVITIES,
@@ -32,7 +33,11 @@ from lib.data_parser import (
     parse_progress_sheet,
     style_full_daily_complete_rows,
 )
-from lib.details import details_rows_for_sheet, merge_details_with_progress
+from lib.details import (
+    _normalize_critical,
+    details_rows_for_sheet,
+    merge_details_with_progress,
+)
 from lib.sheets_client import (
     append_history_row,
     append_issue_row,
@@ -521,16 +526,29 @@ def render_work_plan_vs_actual(parsed: dict[str, dict]):
     st.dataframe(table, width="stretch", hide_index=True)
 
 
-def _style_details_critical(df: pd.DataFrame):
-    """Highlight Critical rows in red."""
-    if df is None or df.empty or "Critical" not in df.columns:
+def _style_details_rows(df: pd.DataFrame):
+    """Row colors: Critical=red, Medium=yellow, Completed=green."""
+    if df is None or df.empty:
         return df
     styles = pd.DataFrame("", index=df.index, columns=df.columns)
+    green = "background-color: #C8E6C9; color: #1B5E20"
+    yellow = "background-color: #FFF9C4; color: #F57F17"
     red = "background-color: #FFCDD2; color: #B71C1C"
+
     for idx, row in df.iterrows():
-        if str(row.get("Critical", "")).strip() == "Critical":
-            for col in df.columns:
-                styles.at[idx, col] = red
+        critical = str(row.get("Critical", "")).strip()
+        progress = str(row.get("Progress", "")).strip()
+        if critical == "Critical":
+            style = red
+        elif critical == "Medium":
+            style = yellow
+        elif progress == "Completed":
+            style = green
+        else:
+            continue
+        for col in df.columns:
+            styles.at[idx, col] = style
+
     return df.style.apply(lambda _: styles, axis=None)
 
 
@@ -567,8 +585,8 @@ def render_location_details(parsed: dict[str, dict]):
             with f3:
                 critical_filter = st.multiselect(
                     "Critical",
-                    options=["Critical", "Not Critical"],
-                    default=["Critical", "Not Critical"],
+                    options=CRITICAL_LEVELS,
+                    default=CRITICAL_LEVELS,
                     key="details_critical_f",
                 )
 
@@ -593,7 +611,7 @@ def render_location_details(parsed: dict[str, dict]):
 
             display_cols = ["#", "Campus", "Location", "Critical", "Remarks", "Progress"]
             st.dataframe(
-                _style_details_critical(filtered[display_cols]),
+                _style_details_rows(filtered[display_cols]),
                 width="stretch",
                 hide_index=True,
             )
@@ -609,7 +627,7 @@ def render_location_details(parsed: dict[str, dict]):
 
         edit_df = view[["Campus", "Location", "Critical", "Remarks", "Progress"]].copy()
         edit_df["Critical"] = edit_df["Critical"].map(
-            lambda v: True if str(v).strip() == "Critical" else False
+            lambda v: v if str(v).strip() in CRITICAL_LEVELS else "Not Critical"
         )
 
         edited = st.data_editor(
@@ -621,10 +639,12 @@ def render_location_details(parsed: dict[str, dict]):
             column_config={
                 "Campus": st.column_config.TextColumn("Campus", width="medium"),
                 "Location": st.column_config.TextColumn("Location", width="large"),
-                "Critical": st.column_config.CheckboxColumn(
+                "Critical": st.column_config.SelectboxColumn(
                     "Critical",
-                    help="Tick if this location is critical (shown in red on View).",
-                    default=False,
+                    options=CRITICAL_LEVELS,
+                    help="Not Critical, Medium (yellow), or Critical (red).",
+                    required=True,
+                    width="medium",
                 ),
                 "Remarks": st.column_config.TextColumn(
                     "Remarks",
@@ -648,9 +668,7 @@ def render_location_details(parsed: dict[str, dict]):
 
         if save:
             to_save = edited.copy()
-            to_save["Critical"] = to_save["Critical"].map(
-                lambda v: "Critical" if bool(v) else "Not Critical"
-            )
+            to_save["Critical"] = to_save["Critical"].map(_normalize_critical)
             rows = details_rows_for_sheet(to_save)
             if sync_details_sheet(rows):
                 st.success(f"Saved {len(rows) - 1} locations to DETAILS sheet.")
