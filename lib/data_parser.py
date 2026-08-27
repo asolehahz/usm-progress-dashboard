@@ -927,7 +927,10 @@ def location_changes_by_building(
     df: pd.DataFrame, prev_date: str, latest_date: str
 ) -> dict[str, dict[str, str]]:
     """
-    building code (K05, H06, …) → {activity: 'prev→latest (↑N)'} for INDUK progress.
+    Location key → {activity: 'prev→latest (↑N)'} for one campus sheet.
+
+    Keys include the building code when present (K05, H06) and a stable
+    short label otherwise, so Blok SH / Murni names stay unique.
     """
     if df is None or df.empty or not prev_date or not latest_date:
         return {}
@@ -968,10 +971,25 @@ def location_changes_by_building(
     )
     lookup: dict[str, dict[str, str]] = {}
 
-    for location in locations:
+    def _unique_keys(location: str) -> list[str]:
+        """Prefer building code; else compressed unique name."""
+        keys: list[str] = []
         code = _building_short_label(location).upper()
-        if not code:
-            continue
+        # Only treat as a real code if it looks like K01 / H06 / etc.
+        if re.fullmatch(r"[A-Z]\d{2}", code or ""):
+            keys.append(code)
+        compact = re.sub(r"[^A-Z0-9]+", "", location.strip().upper())
+        compact = re.sub(r"^(BLOK|BLOCK|DESASISWA|DS)+", "", compact)
+        if compact and compact not in keys:
+            keys.append(compact)
+        # Always keep full compact as last resort
+        full = re.sub(r"[^A-Z0-9]+", "", location.strip().upper())
+        if full and full not in keys:
+            keys.append(full)
+        return keys
+
+    for location in locations:
+        bucket: dict[str, str] = {}
         for act in ACTIVITIES:
             if act in FRACTION_METRIC_ACTIVITIES:
                 v0 = prev_done.get(location, {}).get(act)
@@ -995,9 +1013,11 @@ def location_changes_by_building(
                 arrow = "↑" if diff > 0 else "↓"
                 prev_s, latest_s = f"{v0:.0f}%", f"{v1:.0f}%"
                 change = f"{arrow} {abs(diff):.0f}%"
-            lookup.setdefault(code, {})[act] = (
-                f"{act} {prev_s}→{latest_s} ({change})"
-            )
+            bucket[act] = f"{act} {prev_s}→{latest_s} ({change})"
+        if not bucket:
+            continue
+        for key in _unique_keys(location):
+            lookup[key] = bucket
 
     return lookup
 

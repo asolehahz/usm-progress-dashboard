@@ -484,13 +484,12 @@ def render_work_plan_vs_actual(parsed: dict[str, dict]):
         key="work_plan_date",
     )
 
-    induk_df = parsed.get("INDUK", {}).get("raw_df")
-    table, prev_date = build_work_plan_view(plan, induk_df, selected_date)
+    table, prev_date = build_work_plan_view(plan, parsed, selected_date)
 
     if prev_date:
         st.caption(
             f"Reported changes compare progress on **{selected_date}** "
-            f"vs **{prev_date}**."
+            f"vs **{prev_date}** (all campuses)."
         )
     else:
         st.caption(f"Work plan for **{selected_date}**.")

@@ -6,7 +6,7 @@ import re
 
 import pandas as pd
 
-from app_config import ACTIVITIES, WORK_PLAN_COLUMNS
+from app_config import ACTIVITIES, WORK_PLAN_COLUMNS, campus_sheet_names
 from lib.data_parser import (
     _normalize_date_label,
     _parse_date_key,
@@ -15,14 +15,51 @@ from lib.data_parser import (
 )
 
 
-def _plan_location_code(location: str) -> str:
-    """Extract building code from plan label, e.g. 'K05 - DS Aman Damai' → K05."""
+def _normalize_location_key(location: str) -> str:
+    """
+    Fuzzy key so plan labels match progress sheet names.
+
+    Examples:
+      'K05 - DS Aman Damai'     → 'K05'
+      'Blok SH1' / 'Blok SH 1'  → 'SH1'
+      '- Blok Desasiswa Murni 1' / 'Desasiswa Murni 1' → 'MURNI1'
+      'Desasiswa Murni 5 & 6' / 'Desasiswa Murni 5&6' → 'MURNI56'
+    """
     text = str(location or "").strip().upper()
-    match = re.search(r"\b([A-Z]\d{2})\b", text)
-    if match:
-        return match.group(1)
-    match = re.match(r"^([A-Z]\d{1,2})\b", text)
-    return match.group(1) if match else text[:12]
+    # Strip leading bullets / dashes / weird chars
+    text = re.sub(r"^[^A-Z0-9]+", "", text)
+    # Common typo: letter O instead of zero
+    text = re.sub(r"\bK[O](\d)\b", r"K0\1", text)
+    text = text.replace("KO8", "K08")
+
+    # Prefer explicit building code K01 / H06 / L12 / M03 / F25
+    code = re.search(r"\b([A-Z]\d{2})\b", text)
+    if code:
+        return code.group(1)
+
+    # SH blocks: Blok SH1 / Blok SH 1 / SH1
+    sh = re.search(r"\bSH\s*(\d+)\b", text)
+    if sh:
+        return f"SH{sh.group(1)}"
+
+    # Strip common prefixes then compress
+    text = re.sub(r"\b(BLOK|BLOCK|DESASISWA|DS)\b", " ", text)
+    text = re.sub(r"[^A-Z0-9]+", "", text)
+    return text
+
+
+def _location_match_keys(location: str) -> list[str]:
+    """All lookup keys for one location label."""
+    keys: list[str] = []
+    primary = _normalize_location_key(location)
+    if primary:
+        keys.append(primary)
+    # Also keep a compressed full-string key as fallback
+    compact = re.sub(r"[^A-Z0-9]+", "", str(location or "").strip().upper())
+    compact = re.sub(r"^[^A-Z0-9]+", "", compact)
+    if compact and compact not in keys:
+        keys.append(compact)
+    return keys
 
 
 def work_type_to_activities(work_type: str) -> list[str]:
@@ -30,25 +67,33 @@ def work_type_to_activities(work_type: str) -> list[str]:
     key = str(work_type or "").strip().lower()
     if not key:
         return list(ACTIVITIES)
-    if "cabling" in key and "trunking" in key:
-        return ["Trunking", "Lay Cable", "Termination"]
+
+    acts: list[str] = []
     if "trunking" in key:
-        return ["Trunking"]
+        acts.append("Trunking")
     if "cabling" in key or "lay cable" in key:
-        return ["Lay Cable", "Termination"]
-    if "termination" in key:
-        return ["Termination"]
+        acts.extend(["Lay Cable", "Termination"])
+    if "termination" in key and "Termination" not in acts:
+        acts.append("Termination")
+    if re.search(r"\bap\b", key) or "ap mounting" in key:
+        acts.append("AP Mounting")
     if "utp" in key:
-        return ["UTP Point"]
-    if "ap" in key and "mount" in key:
-        return ["AP Mounting"]
+        acts.append("UTP Point")
     if "fiber" in key:
-        return ["Fiber Optic"]
+        acts.append("Fiber Optic")
     if "slab" in key or "coring" in key:
-        return ["Slab Coring (hole)"]
+        acts.append("Slab Coring (hole)")
     if "rack" in key:
-        return ["Rack Installation (nos)"]
-    return list(ACTIVITIES)
+        acts.append("Rack Installation (nos)")
+
+    # Deduplicate, preserve order
+    seen: set[str] = set()
+    out: list[str] = []
+    for a in acts:
+        if a not in seen:
+            seen.add(a)
+            out.append(a)
+    return out if out else list(ACTIVITIES)
 
 
 def parse_work_plan(raw: pd.DataFrame) -> pd.DataFrame:
@@ -120,8 +165,8 @@ def work_plan_dates(plan: pd.DataFrame, *, newest_first: bool = True) -> list[st
     return list(reversed(ordered)) if newest_first else ordered
 
 
-def _previous_progress_date(induk_df: pd.DataFrame, selected: str) -> str | None:
-    dates = available_dates(induk_df, newest_first=False)
+def _previous_progress_date(df: pd.DataFrame, selected: str) -> str | None:
+    dates = available_dates(df, newest_first=False)
     if not dates or not selected:
         return None
     selected_norm = _normalize_date_label(selected)
@@ -138,21 +183,109 @@ def _previous_progress_date(induk_df: pd.DataFrame, selected: str) -> str | None
     return dates[idx - 1]
 
 
-def _change_lookup_by_building(
-    induk_df: pd.DataFrame, prev_date: str, latest_date: str
+def _index_changes_by_location_keys(
+    changes_by_code: dict[str, dict[str, str]],
+    raw_df: pd.DataFrame,
 ) -> dict[str, dict[str, str]]:
-    return location_changes_by_building(induk_df, prev_date, latest_date)
+    """
+    Expand building-code lookup with fuzzy location keys from sheet names
+    so plan labels like 'Blok SH1' match progress 'Blok SH 1'.
+    """
+    from lib.data_parser import (
+        _building_short_label,
+        _detect_header_row_index,
+        _detect_location_progress_cols,
+        _iter_location_blocks,
+    )
+
+    indexed: dict[str, dict[str, str]] = {
+        code.upper(): dict(acts) for code, acts in changes_by_code.items()
+    }
+
+    if raw_df is None or raw_df.empty:
+        return indexed
+
+    header_idx = _detect_header_row_index(raw_df)
+    header_row = raw_df.iloc[header_idx]
+    location_col, progress_col = _detect_location_progress_cols(header_row)
+    for location, *_ in _iter_location_blocks(
+        raw_df, header_idx, location_col, progress_col
+    ):
+        code = _building_short_label(location).upper()
+        acts = changes_by_code.get(code) or changes_by_code.get(code.strip())
+        if not acts:
+            # Fallback: match by normalized key equality against stored keys
+            loc_keys = set(_location_match_keys(location))
+            for stored_key, stored_acts in changes_by_code.items():
+                if stored_key.upper() in loc_keys or _normalize_location_key(
+                    stored_key
+                ) in loc_keys:
+                    acts = stored_acts
+                    break
+        if not acts:
+            continue
+        for key in _location_match_keys(location):
+            indexed[key] = acts
+
+    return indexed
+
+
+def _collect_changes_across_campuses(
+    parsed: dict[str, dict], selected_date: str
+) -> tuple[dict[str, dict[str, str]], str | None]:
+    """
+    Merge progress deltas from all campus sheets for selected_date vs previous.
+    Returns (lookup_by_normalized_key, example_prev_date).
+    """
+    selected_norm = _normalize_date_label(selected_date)
+    merged: dict[str, dict[str, str]] = {}
+    prev_used: str | None = None
+
+    for campus in campus_sheet_names():
+        raw_df = parsed.get(campus, {}).get("raw_df")
+        if raw_df is None or getattr(raw_df, "empty", True):
+            continue
+        date_list = available_dates(raw_df, newest_first=False)
+        dates = {_normalize_date_label(d) for d in date_list}
+        if selected_norm not in dates:
+            continue
+
+        prev_date = _previous_progress_date(raw_df, selected_date)
+        if not prev_date:
+            continue
+        prev_used = prev_used or prev_date
+
+        by_code = location_changes_by_building(raw_df, prev_date, selected_date)
+        indexed = _index_changes_by_location_keys(by_code, raw_df)
+
+        for key, acts in indexed.items():
+            if key not in merged:
+                merged[key] = dict(acts)
+            else:
+                merged[key].update(acts)
+
+    return merged, prev_used
+
+
+def _lookup_location_changes(
+    changes: dict[str, dict[str, str]], plan_location: str
+) -> dict[str, str]:
+    for key in _location_match_keys(plan_location):
+        if key in changes:
+            return changes[key]
+    return {}
 
 
 def build_work_plan_view(
     plan: pd.DataFrame,
-    induk_df: pd.DataFrame,
+    parsed_or_induk: dict[str, dict] | pd.DataFrame,
     selected_date: str,
 ) -> tuple[pd.DataFrame, str | None]:
     """
-    Filter plan rows for selected_date and fill Reported changes from INDUK progress.
+    Filter plan rows for selected_date and fill Reported changes from progress.
 
-    Returns (display_table, previous_date_used).
+    Accepts full parsed campus dict (preferred) or a single INDUK raw_df for
+    backward compatibility.
     """
     empty = pd.DataFrame(
         columns=["#", "Duration", "Location", "Type of work", "Reported changes"]
@@ -169,42 +302,38 @@ def build_work_plan_view(
     if day_rows.empty:
         return empty, None
 
-    prev_date = _previous_progress_date(induk_df, selected_date)
-    changes_by_code: dict[str, dict[str, str]] = {}
-    if induk_df is not None and not induk_df.empty and prev_date:
-        progress_dates = {
-            _normalize_date_label(d) for d in available_dates(induk_df, newest_first=False)
-        }
-        if selected_norm in progress_dates:
-            changes_by_code = _change_lookup_by_building(
-                induk_df, prev_date, selected_date
-            )
+    if isinstance(parsed_or_induk, dict):
+        changes_by_key, prev_date = _collect_changes_across_campuses(
+            parsed_or_induk, selected_date
+        )
+    else:
+        # Legacy: single campus dataframe (INDUK)
+        induk_df = parsed_or_induk
+        prev_date = _previous_progress_date(induk_df, selected_date)
+        changes_by_key = {}
+        if induk_df is not None and not getattr(induk_df, "empty", True) and prev_date:
+            by_code = location_changes_by_building(induk_df, prev_date, selected_date)
+            changes_by_key = _index_changes_by_location_keys(by_code, induk_df)
 
     out_rows: list[dict[str, str]] = []
     for _, row in day_rows.iterrows():
-        code = _plan_location_code(row["Location"]).upper()
         planned_acts = work_type_to_activities(row["Type_of_work"])
         reported = str(row.get("Reported_changes", "") or "").strip()
 
         if not reported:
-            loc_changes = changes_by_code.get(code, {})
+            loc_changes = _lookup_location_changes(changes_by_key, row["Location"])
             if not prev_date:
                 reported = "No earlier progress date to compare"
             elif not loc_changes:
                 reported = "No change"
             else:
                 matched = [
-                    loc_changes[act]
-                    for act in planned_acts
-                    if act in loc_changes
+                    loc_changes[act] for act in planned_acts if act in loc_changes
                 ]
                 if matched:
                     reported = "; ".join(matched)
-                elif loc_changes:
-                    # Other work moved at this location — still show it.
-                    reported = "; ".join(loc_changes[a] for a in sorted(loc_changes))
                 else:
-                    reported = "No change"
+                    reported = "; ".join(loc_changes[a] for a in sorted(loc_changes))
 
         out_rows.append(
             {
