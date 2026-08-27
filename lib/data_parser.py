@@ -1266,6 +1266,15 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
             df, done_row, total_row, percent_row, act_cols
         )
 
+    # Fiber Optic (and other %×TOTAL activities): footer totals from locations,
+    # not the sheet TOTAL DONE / OVERALL TOTAL cells.
+    fiber_sum_done, fiber_sum_total = _sum_location_done_total(
+        location_blocks, df, act_cols, list(PCT_DERIVED_DONE_EXACT)
+    )
+    fiber_avg = _average_percent_from_totals(
+        fiber_sum_done, fiber_sum_total, columns=list(PCT_DERIVED_DONE_EXACT)
+    )
+
     rows: list[dict[str, str]] = []
     current_location = ""
 
@@ -1288,9 +1297,13 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
         if is_summary:
             location_out = loc_val
             progress_out = ""
+            summary_kind = loc_upper
+            if summary_kind == "AVERAGE PERCENT":
+                summary_kind = "AVERAGE PERCENTAGE"
         else:
             location_out = current_location if progress == "DONE" else ""
             progress_out = "PERCENTAGE" if progress == "PERCENT" else progress
+            summary_kind = ""
 
         row_data: dict[str, str] = {
             "Location": location_out,
@@ -1306,10 +1319,33 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
                 continue
             if progress_out == "DONE" and act_name in PCT_DERIVED_DONE_EXACT:
                 derived = done_vals.get(act_name)
-                if derived is not None:
-                    row_data[act_name] = _display_activity_cell(
-                        derived, act_name, "DONE"
+                row_data[act_name] = (
+                    _display_activity_cell(derived, act_name, "DONE")
+                    if derived is not None
+                    else "N/A"
+                )
+                continue
+            # Footer: Fiber TOTAL DONE / OVERALL TOTAL / AVERAGE from Σ(%×TOTAL).
+            if is_summary and act_name in PCT_DERIVED_DONE_EXACT:
+                if summary_kind == "TOTAL DONE":
+                    val = fiber_sum_done.get(act_name)
+                    row_data[act_name] = (
+                        _display_activity_cell(val, act_name, "TOTAL DONE")
+                        if val is not None
+                        else "N/A"
                     )
+                    continue
+                if summary_kind == "OVERALL TOTAL":
+                    val = fiber_sum_total.get(act_name)
+                    row_data[act_name] = (
+                        _display_activity_cell(val, act_name, "OVERALL TOTAL")
+                        if val is not None
+                        else "N/A"
+                    )
+                    continue
+                if summary_kind == "AVERAGE PERCENTAGE":
+                    pct = fiber_avg.get(act_name)
+                    row_data[act_name] = f"{pct:.2f}%" if pct is not None else "N/A"
                     continue
             if (
                 progress_out == "PERCENTAGE"
