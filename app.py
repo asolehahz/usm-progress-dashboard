@@ -367,15 +367,7 @@ def render_dashboard(parsed: dict[str, dict]):
             title=f"{icon} {desa}",
             building_increases=building_increases,
         )
-        view = st.radio(
-            "Detail view",
-            options=["Changes table", "Progress graph"],
-            horizontal=True,
-            key="dashboard_detail_view",
-        )
-        if view == "Progress graph":
-            render_dashboard_chart(overall)
-        elif raw_df is not None and prev_date and latest_date:
+        if raw_df is not None and prev_date and latest_date:
             summary = location_change_summary(
                 raw_df, prev_date, latest_date, group_filter=desa
             )
@@ -390,15 +382,7 @@ def render_dashboard(parsed: dict[str, dict]):
         overall,
         title=f"{icon} {campus}",
     )
-    view = st.radio(
-        "Detail view",
-        options=["Changes table", "Progress graph"],
-        horizontal=True,
-        key="dashboard_detail_view",
-    )
-    if view == "Progress graph":
-        render_dashboard_chart(overall)
-    elif (
+    if (
         raw_df is not None
         and overall is not None
         and not getattr(overall, "empty", True)
