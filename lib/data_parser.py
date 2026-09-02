@@ -807,6 +807,15 @@ def _location_done_counts_for_date_block(
     return out
 
 
+def _format_change_value(act: str, value: float | None) -> str:
+    """Format a change-table value (count for UTP/AP, % for others)."""
+    if value is None:
+        return "—"
+    if act in FRACTION_METRIC_ACTIVITIES:
+        return str(int(round(value)))
+    return f"{value:.0f}%"
+
+
 def location_change_summary(
     df: pd.DataFrame,
     prev_date: str,
@@ -882,7 +891,20 @@ def location_change_summary(
             if act in FRACTION_METRIC_ACTIVITIES:
                 v0 = prev_done.get(location, {}).get(act)
                 v1 = latest_done.get(location, {}).get(act)
-                if v0 is None or v1 is None:
+                if v0 is None and v1 is None:
+                    continue
+                if v0 is None and v1 is not None:
+                    rows.append(
+                        {
+                            "Location": _friendly_location_label(location),
+                            "Item": act,
+                            prev_col: "—",
+                            latest_col: _format_change_value(act, v1),
+                            "Change": "★ New",
+                        }
+                    )
+                    continue
+                if v1 is None:
                     continue
                 diff = float(v1) - float(v0)
                 if abs(diff) < 1e-9:
@@ -900,7 +922,20 @@ def location_change_summary(
             else:
                 v0 = prev_pct.get(location, {}).get(act)
                 v1 = latest_pct.get(location, {}).get(act)
-                if v0 is None or v1 is None:
+                if v0 is None and v1 is None:
+                    continue
+                if v0 is None and v1 is not None:
+                    rows.append(
+                        {
+                            "Location": _friendly_location_label(location),
+                            "Item": act,
+                            prev_col: "—",
+                            latest_col: _format_change_value(act, v1),
+                            "Change": "★ New",
+                        }
+                    )
+                    continue
+                if v1 is None:
                     continue
                 diff = float(v1) - float(v0)
                 if abs(diff) < 1e-9:
@@ -994,7 +1029,13 @@ def location_changes_by_building(
             if act in FRACTION_METRIC_ACTIVITIES:
                 v0 = prev_done.get(location, {}).get(act)
                 v1 = latest_done.get(location, {}).get(act)
-                if v0 is None or v1 is None:
+                if v0 is None and v1 is None:
+                    continue
+                if v0 is None and v1 is not None:
+                    latest_s = _format_change_value(act, v1)
+                    bucket[act] = f"{act} —→{latest_s} (★ New)"
+                    continue
+                if v1 is None:
                     continue
                 diff = float(v1) - float(v0)
                 if abs(diff) < 1e-9:
@@ -1005,7 +1046,13 @@ def location_changes_by_building(
             else:
                 v0 = prev_pct.get(location, {}).get(act)
                 v1 = latest_pct.get(location, {}).get(act)
-                if v0 is None or v1 is None:
+                if v0 is None and v1 is None:
+                    continue
+                if v0 is None and v1 is not None:
+                    latest_s = _format_change_value(act, v1)
+                    bucket[act] = f"{act} —→{latest_s} (★ New)"
+                    continue
+                if v1 is None:
                     continue
                 diff = float(v1) - float(v0)
                 if abs(diff) < 1e-9:

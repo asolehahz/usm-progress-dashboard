@@ -336,6 +336,10 @@ def render_change_summary(summary: pd.DataFrame, prev_date: str, latest_date: st
     st.subheader("Changes since previous date")
     if summary is None or summary.empty:
         return
+    st.caption(
+        "**★ New** = activity was not tracked before (—) and now has data — "
+        "e.g. Slab Coring or Rack Installation added to a building."
+    )
     st.dataframe(summary, width="stretch", hide_index=True)
 
 
