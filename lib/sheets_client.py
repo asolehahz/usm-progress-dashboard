@@ -12,6 +12,8 @@ from app_config import (
     DETAILS_COLUMNS,
     DETAILS_GID,
     DETAILS_TAB_NAME,
+    GANTT_GID,
+    GANTT_TAB_NAME,
     HISTORY_COLUMNS,
     HISTORY_GID,
     HISTORY_TAB_NAME,
@@ -187,6 +189,27 @@ def fetch_work_plan() -> pd.DataFrame:
             pass
 
     return pd.DataFrame(columns=WORK_PLAN_COLUMNS)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_gantt() -> pd.DataFrame:
+    """Load gantt schedule tab."""
+    if GANTT_GID:
+        try:
+            return fetch_csv(GANTT_GID)
+        except Exception:
+            pass
+
+    client = _get_gspread_client()
+    if client:
+        try:
+            spreadsheet = client.open_by_key(SHEET_ID)
+            worksheet = spreadsheet.worksheet(GANTT_TAB_NAME)
+            return pd.DataFrame(worksheet.get_all_values())
+        except Exception:
+            pass
+
+    return pd.DataFrame()
 
 
 def _parse_details_df(raw: pd.DataFrame) -> pd.DataFrame:

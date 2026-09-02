@@ -38,11 +38,19 @@ from lib.details import (
     details_rows_for_sheet,
     merge_details_with_progress,
 )
+from lib.gantt import (
+    blackout_timeline_figure,
+    build_current_progress_table,
+    gantt_locations_overall,
+    parse_gantt,
+    schedule_timeline_table,
+)
 from lib.sheets_client import (
     append_history_row,
     append_issue_row,
     fetch_all_tabs,
     fetch_details,
+    fetch_gantt,
     fetch_history,
     fetch_issues,
     fetch_work_plan,
@@ -540,6 +548,65 @@ def _style_details_rows(df: pd.DataFrame):
     return df.style.apply(lambda _: styles, axis=None)
 
 
+def render_gantt(parsed: dict[str, dict]):
+    st.header("Gantt")
+    st.caption(
+        "Schedule from the **gantt** sheet. **Current Progress** uses recalculated "
+        "daily INDUK data for each listed building (same rules as Dashboard)."
+    )
+
+    raw_gantt = fetch_gantt()
+    schedule, date_cols = parse_gantt(raw_gantt)
+    if schedule.empty:
+        st.warning("No rows found in the gantt sheet.")
+        return
+
+    induk = parsed.get("INDUK", {})
+    raw_df = induk.get("raw_df")
+    dates = available_dates(raw_df, newest_first=True) if raw_df is not None else []
+    latest_date = dates[0] if dates else ""
+
+    tab_schedule, tab_progress = st.tabs(["Gantt Schedule", "Current Progress"])
+
+    with tab_schedule:
+        st.subheader("Building schedule")
+        meta_view = schedule_timeline_table(schedule, date_cols)
+        st.dataframe(meta_view, width="stretch", hide_index=True)
+
+        fig = blackout_timeline_figure(schedule)
+        if fig is not None:
+            st.plotly_chart(fig, width="stretch")
+        else:
+            st.info("No blackout periods with valid start/end dates to chart.")
+
+    with tab_progress:
+        if raw_df is None or getattr(raw_df, "empty", True) or not latest_date:
+            st.warning("No INDUK daily progress data available.")
+            return
+
+        st.caption(f"Latest daily data: **{latest_date}**")
+        overall = gantt_locations_overall(
+            raw_df, schedule, latest_date=latest_date
+        )
+        if overall is not None and not overall.empty:
+            render_activity_average_panel(
+                overall,
+                title="🏫 Gantt locations (overall)",
+            )
+
+        progress_table = build_current_progress_table(
+            raw_df, schedule, latest_date=latest_date
+        )
+        st.subheader("Per location")
+        display_cols = (
+            ["Location", "Blackout", "Remarks"]
+            + list(ACTIVITIES)
+            + ["Progress location"]
+        )
+        display_cols = [c for c in display_cols if c in progress_table.columns]
+        st.dataframe(progress_table[display_cols], width="stretch", hide_index=True)
+
+
 def render_location_details(parsed: dict[str, dict]):
     st.header("Location Details")
     st.caption(
@@ -880,6 +947,10 @@ def page_work_plan():
     render_work_plan_vs_actual(_load_or_fail())
 
 
+def page_gantt():
+    render_gantt(_load_or_fail())
+
+
 def page_location_details():
     render_location_details(_load_or_fail())
 
@@ -904,6 +975,7 @@ def main():
         fetch_history.clear()
         fetch_issues.clear()
         fetch_work_plan.clear()
+        fetch_gantt.clear()
         fetch_details.clear()
         st.rerun()
 
@@ -922,6 +994,12 @@ def main():
                     title="Location Details",
                     icon="📍",
                     url_path="location-details",
+                ),
+                st.Page(
+                    page_gantt,
+                    title="Gantt",
+                    icon="📅",
+                    url_path="gantt",
                 ),
             ],
             "Check Daily Data": list(CAMPUS_PAGES.values()),

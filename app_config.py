@@ -133,6 +133,10 @@ DETAILS_COLUMNS = [
 ]
 CRITICAL_LEVELS = ["Not Critical", "Medium", "Critical"]
 
+GANTT_TAB_NAME = "gantt"
+GANTT_GID = "1898933869"
+GANTT_META_COLUMNS = ["Location", "Blackout", "Remarks", "Blackout Start", "Blackout End"]
+
 CACHE_TTL_SECONDS = 300
 
 # INDUK-only: locations rolled up into these desa groups.
