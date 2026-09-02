@@ -44,6 +44,8 @@ from lib.gantt import (
     gantt_locations_overall,
     parse_gantt,
     schedule_timeline_table,
+    style_gantt_schedule,
+    synthetic_blackout_colors,
 )
 from lib.sheets_client import (
     append_history_row,
@@ -51,6 +53,7 @@ from lib.sheets_client import (
     fetch_all_tabs,
     fetch_details,
     fetch_gantt,
+    fetch_gantt_cell_colors,
     fetch_history,
     fetch_issues,
     fetch_work_plan,
@@ -556,10 +559,13 @@ def render_gantt(parsed: dict[str, dict]):
     )
 
     raw_gantt = fetch_gantt()
-    schedule, date_cols = parse_gantt(raw_gantt)
+    schedule, date_cols, gantt_meta = parse_gantt(raw_gantt)
     if schedule.empty:
         st.warning("No rows found in the gantt sheet.")
         return
+
+    column_indices = gantt_meta.get("column_indices") or {}
+    sheet_row_indices = gantt_meta.get("sheet_row_indices") or []
 
     induk = parsed.get("INDUK", {})
     raw_df = induk.get("raw_df")
@@ -571,7 +577,28 @@ def render_gantt(parsed: dict[str, dict]):
     with tab_schedule:
         st.subheader("Building schedule")
         meta_view = schedule_timeline_table(schedule, date_cols)
-        st.dataframe(meta_view, width="stretch", hide_index=True)
+        cell_colors = fetch_gantt_cell_colors()
+        synthetic = synthetic_blackout_colors(
+            schedule,
+            date_cols,
+            sheet_row_indices=list(sheet_row_indices),
+            column_indices=dict(column_indices),
+        )
+        if cell_colors:
+            for key, value in synthetic.items():
+                cell_colors.setdefault(key, value)
+            color_note = "Cell colours from the Google Sheet (blackout fill where not coloured)."
+        else:
+            cell_colors = synthetic
+            color_note = "Blackout windows shown in red (from stop/start dates)."
+        st.caption(color_note)
+        styled = style_gantt_schedule(
+            meta_view,
+            cell_colors,
+            sheet_row_indices=list(sheet_row_indices),
+            column_indices=dict(column_indices),
+        )
+        st.dataframe(styled, width="stretch", hide_index=True)
 
         fig = blackout_timeline_figure(schedule)
         if fig is not None:
@@ -976,6 +1003,7 @@ def main():
         fetch_issues.clear()
         fetch_work_plan.clear()
         fetch_gantt.clear()
+        fetch_gantt_cell_colors.clear()
         fetch_details.clear()
         st.rerun()
 

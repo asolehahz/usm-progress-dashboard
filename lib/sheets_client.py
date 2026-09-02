@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import io
+import json
+import urllib.parse
+import urllib.request
 from typing import Any
 
 import pandas as pd
@@ -210,6 +213,76 @@ def fetch_gantt() -> pd.DataFrame:
             pass
 
     return pd.DataFrame()
+
+
+def _sheet_rgb_to_hex(bg: dict | None) -> str | None:
+    """Convert Sheets API backgroundColor dict to #RRGGBB (skip white/default)."""
+    if not bg:
+        return None
+    r = float(bg.get("red") or 0)
+    g = float(bg.get("green") or 0)
+    b = float(bg.get("blue") or 0)
+    if r >= 0.99 and g >= 0.99 and b >= 0.99:
+        return None
+    if r <= 0.01 and g <= 0.01 and b <= 0.01 and not any(k in bg for k in ("red", "green", "blue")):
+        return None
+    return f"#{int(round(r * 255)):02x}{int(round(g * 255)):02x}{int(round(b * 255)):02x}"
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_gantt_cell_colors() -> dict[tuple[int, int], str]:
+    """
+    Cell background colours from the gantt tab (sheet row, col) → #RRGGBB.
+
+    Requires gcp_service_account in Streamlit secrets. CSV export has no colours.
+    """
+    if "gcp_service_account" not in st.secrets:
+        return {}
+
+    try:
+        from google.auth.transport.requests import Request
+        from google.oauth2.service_account import Credentials
+    except ImportError:
+        return {}
+
+    creds = Credentials.from_service_account_info(
+        dict(st.secrets["gcp_service_account"]),
+        scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"],
+    )
+    creds.refresh(Request())
+
+    params = urllib.parse.urlencode(
+        {
+            "ranges": f"'{GANTT_TAB_NAME}'",
+            "includeGridData": "true",
+            "fields": "sheets.data.rowData.values.effectiveFormat.backgroundColor",
+        }
+    )
+    url = f"https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}?{params}"
+    req = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {creds.token}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode())
+    except Exception:
+        return {}
+
+    colors: dict[tuple[int, int], str] = {}
+    sheets = payload.get("sheets") or []
+    if not sheets:
+        return colors
+    data_blocks = sheets[0].get("data") or []
+    if not data_blocks:
+        return colors
+    for r_idx, row in enumerate(data_blocks[0].get("rowData") or []):
+        for c_idx, cell in enumerate(row.get("values") or []):
+            bg = (cell.get("effectiveFormat") or {}).get("backgroundColor")
+            hex_color = _sheet_rgb_to_hex(bg)
+            if hex_color:
+                colors[(r_idx, c_idx)] = hex_color
+    return colors
 
 
 def _parse_details_df(raw: pd.DataFrame) -> pd.DataFrame:

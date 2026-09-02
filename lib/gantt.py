@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 import pandas as pd
@@ -28,14 +29,22 @@ from lib.data_parser import (
 from lib.work_plan import _location_match_keys
 
 
-def parse_gantt(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+def parse_gantt(
+    raw: pd.DataFrame,
+) -> tuple[pd.DataFrame, list[str], dict[str, object]]:
     """
     Parse gantt tab into metadata rows + timeline date column labels.
 
-    Sheet layout: header row with Location / Blackout / Remarks / stop / start / dates…
+    Returns (schedule, date_cols, meta) where meta has header_row_idx,
+    column_indices (display col → sheet col), sheet_row_indices.
     """
+    empty_meta: dict[str, object] = {
+        "header_row_idx": 0,
+        "column_indices": {},
+        "sheet_row_indices": [],
+    }
     if raw is None or raw.empty:
-        return pd.DataFrame(columns=GANTT_META_COLUMNS), []
+        return pd.DataFrame(columns=GANTT_META_COLUMNS), [], empty_meta
 
     header_row_idx = None
     for i in range(min(8, len(raw))):
@@ -44,7 +53,7 @@ def parse_gantt(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
             header_row_idx = i
             break
     if header_row_idx is None:
-        return pd.DataFrame(columns=GANTT_META_COLUMNS), []
+        return pd.DataFrame(columns=GANTT_META_COLUMNS), [], empty_meta
 
     header = [str(v).strip() for v in raw.iloc[header_row_idx].tolist()]
     col_map: dict[str, int] = {}
@@ -69,6 +78,7 @@ def parse_gantt(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
             date_cols.append(name)
 
     rows: list[dict[str, str]] = []
+    sheet_row_indices: list[int] = []
     for r in range(header_row_idx + 1, len(raw)):
         row = raw.iloc[r]
         location = (
@@ -104,10 +114,31 @@ def parse_gantt(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
             else:
                 meta[date_label] = str(row.iloc[col_idx]).strip()
         rows.append(meta)
+        sheet_row_indices.append(r)
+
+    column_indices: dict[str, int] = {}
+    for display_name, key in (
+        ("Location", "Location"),
+        ("Blackout", "Blackout"),
+        ("Remarks", "Remarks"),
+        ("Blackout Start", "Blackout Start"),
+        ("Blackout End", "Blackout End"),
+    ):
+        if key in col_map:
+            column_indices[display_name] = col_map[key]
+    for date_label in date_cols:
+        if date_label in header:
+            column_indices[date_label] = header.index(date_label)
+
+    meta_out: dict[str, object] = {
+        "header_row_idx": header_row_idx,
+        "column_indices": column_indices,
+        "sheet_row_indices": sheet_row_indices,
+    }
 
     if not rows:
-        return pd.DataFrame(columns=GANTT_META_COLUMNS), date_cols
-    return pd.DataFrame(rows), date_cols
+        return pd.DataFrame(columns=GANTT_META_COLUMNS), date_cols, meta_out
+    return pd.DataFrame(rows), date_cols, meta_out
 
 
 def _parse_sheet_date(value: str) -> datetime | None:
@@ -319,6 +350,109 @@ def blackout_timeline_figure(schedule: pd.DataFrame) -> go.Figure | None:
         showlegend=False,
     )
     return fig
+
+
+def _parse_gantt_column_date(label: str, *, year: int = 2026) -> datetime | None:
+    """Parse timeline header labels like 01-Sep or 2-Oct."""
+    text = str(label or "").strip()
+    m = re.match(r"^(\d{1,2})[- ](\w{3,})$", text, re.IGNORECASE)
+    if not m:
+        return None
+    day = int(m.group(1))
+    month_str = m.group(2).lower()[:3]
+    months = {
+        "jan": 1,
+        "feb": 2,
+        "mar": 3,
+        "apr": 4,
+        "may": 5,
+        "jun": 6,
+        "jul": 7,
+        "aug": 8,
+        "sep": 9,
+        "oct": 10,
+        "nov": 11,
+        "dec": 12,
+    }
+    month = months.get(month_str)
+    if not month:
+        return None
+    col_year = year if month >= 9 else year + 1
+    try:
+        return datetime(col_year, month, day)
+    except ValueError:
+        return None
+
+
+def synthetic_blackout_colors(
+    schedule: pd.DataFrame,
+    date_cols: list[str],
+    *,
+    sheet_row_indices: list[int],
+    column_indices: dict[str, int],
+    fill: str = "#F4C7C3",
+) -> dict[tuple[int, int], str]:
+    """Fallback red shading for blackout windows when sheet colours are unavailable."""
+    colors: dict[tuple[int, int], str] = {}
+    for df_i, sheet_row in enumerate(sheet_row_indices):
+        if df_i >= len(schedule):
+            break
+        row = schedule.iloc[df_i]
+        if str(row.get("Blackout", "")).strip().lower() != "yes":
+            continue
+        start = _parse_sheet_date(str(row.get("Blackout Start", "") or ""))
+        end = _parse_sheet_date(str(row.get("Blackout End", "") or ""))
+        if not start or not end:
+            continue
+        if end < start:
+            start, end = end, start
+        for date_label in date_cols:
+            col_date = _parse_gantt_column_date(date_label)
+            sheet_col = column_indices.get(date_label)
+            if col_date is None or sheet_col is None:
+                continue
+            if start.date() <= col_date.date() <= end.date():
+                colors[(sheet_row, sheet_col)] = fill
+    return colors
+
+
+def _text_color_for_bg(hex_color: str) -> str:
+    text = hex_color.lstrip("#")
+    if len(text) != 6:
+        return "#000000"
+    r, g, b = (int(text[i : i + 2], 16) for i in (0, 2, 4))
+    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    return "#FFFFFF" if luminance < 0.55 else "#000000"
+
+
+def style_gantt_schedule(
+    df: pd.DataFrame,
+    colors: dict[tuple[int, int], str],
+    *,
+    sheet_row_indices: list[int],
+    column_indices: dict[str, int],
+):
+    """Apply Google Sheet background colours to the schedule table."""
+    if df is None or df.empty or not colors:
+        return df
+
+    styles = pd.DataFrame("", index=df.index, columns=df.columns)
+    index_list = list(df.index)
+    for df_i, idx in enumerate(index_list):
+        if df_i >= len(sheet_row_indices):
+            break
+        sheet_row = sheet_row_indices[df_i]
+        for col in df.columns:
+            sheet_col = column_indices.get(col)
+            if sheet_col is None:
+                continue
+            hex_color = colors.get((sheet_row, sheet_col))
+            if not hex_color:
+                continue
+            text = _text_color_for_bg(hex_color)
+            styles.at[idx, col] = f"background-color: {hex_color}; color: {text}"
+
+    return df.style.apply(lambda _: styles, axis=None)
 
 
 def schedule_timeline_table(schedule: pd.DataFrame, date_cols: list[str]) -> pd.DataFrame:
