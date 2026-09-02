@@ -1023,12 +1023,7 @@ def main():
                     icon="📍",
                     url_path="location-details",
                 ),
-                st.Page(
-                    page_gantt,
-                    title="Gantt",
-                    icon="📅",
-                    url_path="gantt",
-                ),
+                # Temporarily hidden — restore Gantt page here when needed.
             ],
             "Check Daily Data": list(CAMPUS_PAGES.values()),
             # Temporarily hidden — restore Issue & Risk / Daily History here when needed.
