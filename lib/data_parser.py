@@ -50,7 +50,7 @@ def _parse_percent(value) -> float | None:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
     text = str(value).strip()
-    if not text:
+    if not text or text.upper() in {"N/A", "NA", "-"}:
         return None
     text = text.replace("%", "").replace(",", "")
     try:
@@ -272,7 +272,7 @@ def _parse_number(value) -> float | None:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
     text = str(value).strip().replace(",", "")
-    if not text:
+    if not text or text.upper() in {"N/A", "NA", "-"}:
         return None
     try:
         return float(text)
@@ -388,7 +388,9 @@ def _location_block_values(
       PERCENTAGE recalculated as DONE / TOTAL × 100.
     Trunking / Lay Cable / Termination: DONE not collected → None (show N/A).
       TOTAL and % stay from the sheet; dashboard uses location-mean %.
-    Fiber Optic: DONE = % × TOTAL (no round-to-10).
+    Fiber Optic / Slab Coring / Rack Installation: DONE = % × TOTAL
+    (no round-to-10). Locations that were previously N/A are included
+    as soon as they have % and TOTAL.
     """
     done_vals = _activity_values_from_row(
         df.iloc[done_row], act_cols, include_equipment=include_equipment
@@ -1313,13 +1315,13 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
             df, done_row, total_row, percent_row, act_cols
         )
 
-    # Fiber Optic (and other %×TOTAL activities): footer totals from locations,
-    # not the sheet TOTAL DONE / OVERALL TOTAL cells.
-    fiber_sum_done, fiber_sum_total = _sum_location_done_total(
+    # Fiber / Slab Coring / Rack: footer totals from locations that now
+    # have data (includes buildings that were previously N/A).
+    derived_sum_done, derived_sum_total = _sum_location_done_total(
         location_blocks, df, act_cols, list(PCT_DERIVED_DONE_EXACT)
     )
-    fiber_avg = _average_percent_from_totals(
-        fiber_sum_done, fiber_sum_total, columns=list(PCT_DERIVED_DONE_EXACT)
+    derived_avg = _average_percent_from_totals(
+        derived_sum_done, derived_sum_total, columns=list(PCT_DERIVED_DONE_EXACT)
     )
 
     rows: list[dict[str, str]] = []
@@ -1372,10 +1374,11 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
                     else "N/A"
                 )
                 continue
-            # Footer: Fiber TOTAL DONE / OVERALL TOTAL / AVERAGE from Σ(%×TOTAL).
+            # Footer: Fiber / Slab / Rack TOTAL DONE / OVERALL TOTAL / AVERAGE
+            # from Σ(%×TOTAL) across locations with data (not the sheet footer).
             if is_summary and act_name in PCT_DERIVED_DONE_EXACT:
                 if summary_kind == "TOTAL DONE":
-                    val = fiber_sum_done.get(act_name)
+                    val = derived_sum_done.get(act_name)
                     row_data[act_name] = (
                         _display_activity_cell(val, act_name, "TOTAL DONE")
                         if val is not None
@@ -1383,7 +1386,7 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
                     )
                     continue
                 if summary_kind == "OVERALL TOTAL":
-                    val = fiber_sum_total.get(act_name)
+                    val = derived_sum_total.get(act_name)
                     row_data[act_name] = (
                         _display_activity_cell(val, act_name, "OVERALL TOTAL")
                         if val is not None
@@ -1391,7 +1394,7 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
                     )
                     continue
                 if summary_kind == "AVERAGE PERCENTAGE":
-                    pct = fiber_avg.get(act_name)
+                    pct = derived_avg.get(act_name)
                     row_data[act_name] = f"{pct:.2f}%" if pct is not None else "N/A"
                     continue
             if (
@@ -1590,7 +1593,13 @@ def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
             continue
         record: dict = {"Date": _normalize_date_label(date_label)}
         sum_done, sum_total = _sum_location_done_total(
-            location_blocks, df, act_cols, list(TRUSTED_DONE_TOTAL_ACTIVITIES)
+            location_blocks,
+            df,
+            act_cols,
+            list(TRUSTED_DONE_TOTAL_ACTIVITIES) + list(PCT_DERIVED_DONE_EXACT),
+        )
+        derived_avg = _average_percent_from_totals(
+            sum_done, sum_total, columns=list(PCT_DERIVED_DONE_EXACT)
         )
         for act_name, col_idx in zip(ACTIVITIES, act_cols):
             if act_name in LOCATION_MEAN_PCT_ACTIVITIES:
@@ -1616,6 +1625,8 @@ def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
                     record[act_name] = (
                         round(d / t * 100, 2) if d is not None and t else None
                     )
+            elif act_name in PCT_DERIVED_DONE_EXACT:
+                record[act_name] = derived_avg.get(act_name)
             elif avg_row is not None and col_idx < len(avg_row):
                 record[act_name] = _parse_percent(avg_row.iloc[col_idx])
             else:

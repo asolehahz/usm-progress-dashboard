@@ -68,8 +68,11 @@ PCT_DERIVED_DONE_ROUND10 = [
 ]
 
 # DONE recalculated as % × TOTAL (no round-to-10).
+# Includes newly added Slab Coring / Rack Installation (was N/A, now has data).
 PCT_DERIVED_DONE_EXACT = [
     "Fiber Optic",
+    "Slab Coring (hole)",
+    "Rack Installation (nos)",
 ]
 
 PCT_DERIVED_DONE_ACTIVITIES = PCT_DERIVED_DONE_ROUND10 + PCT_DERIVED_DONE_EXACT
