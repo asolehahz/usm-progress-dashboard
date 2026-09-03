@@ -229,6 +229,17 @@ def _sheet_rgb_to_hex(bg: dict | None) -> str | None:
     return f"#{int(round(r * 255)):02x}{int(round(g * 255)):02x}{int(round(b * 255)):02x}"
 
 
+def _cell_background_hex(cell: dict) -> str | None:
+    """Read fill colour from effectiveFormat or userEnteredFormat (incl. theme rgb)."""
+    for key in ("effectiveFormat", "userEnteredFormat"):
+        fmt = cell.get(key) or {}
+        style = fmt.get("backgroundColorStyle") or {}
+        hex_color = _sheet_rgb_to_hex(style.get("rgbColor") or fmt.get("backgroundColor"))
+        if hex_color:
+            return hex_color
+    return None
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_gantt_cell_colors() -> dict[tuple[int, int], str]:
     """
@@ -255,7 +266,13 @@ def fetch_gantt_cell_colors() -> dict[tuple[int, int], str]:
         {
             "ranges": f"'{GANTT_TAB_NAME}'",
             "includeGridData": "true",
-            "fields": "sheets.data.rowData.values.effectiveFormat.backgroundColor",
+            "fields": (
+                "sheets.data.startRow,sheets.data.startColumn,"
+                "sheets.data.rowData.values.effectiveFormat.backgroundColor,"
+                "sheets.data.rowData.values.effectiveFormat.backgroundColorStyle,"
+                "sheets.data.rowData.values.userEnteredFormat.backgroundColor,"
+                "sheets.data.rowData.values.userEnteredFormat.backgroundColorStyle"
+            ),
         }
     )
     url = f"https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}?{params}"
@@ -276,12 +293,14 @@ def fetch_gantt_cell_colors() -> dict[tuple[int, int], str]:
     data_blocks = sheets[0].get("data") or []
     if not data_blocks:
         return colors
-    for r_idx, row in enumerate(data_blocks[0].get("rowData") or []):
-        for c_idx, cell in enumerate(row.get("values") or []):
-            bg = (cell.get("effectiveFormat") or {}).get("backgroundColor")
-            hex_color = _sheet_rgb_to_hex(bg)
+    block = data_blocks[0]
+    start_row = int(block.get("startRow") or 0)
+    start_col = int(block.get("startColumn") or 0)
+    for r_off, row in enumerate(block.get("rowData") or []):
+        for c_off, cell in enumerate(row.get("values") or []):
+            hex_color = _cell_background_hex(cell)
             if hex_color:
-                colors[(r_idx, c_idx)] = hex_color
+                colors[(start_row + r_off, start_col + c_off)] = hex_color
     return colors
 
 

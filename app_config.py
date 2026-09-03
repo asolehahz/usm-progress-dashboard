@@ -138,7 +138,16 @@ CRITICAL_LEVELS = ["Not Critical", "Medium", "Critical"]
 
 GANTT_TAB_NAME = "gantt"
 GANTT_GID = "1898933869"
-GANTT_META_COLUMNS = ["Location", "Blackout", "Remarks", "Blackout Start", "Blackout End"]
+GANTT_META_COLUMNS = [
+    "Location",
+    "Blackout",
+    "Remarks",
+    "BAKI AP",
+    "BAKI UTP",
+    "BAKI FIBER",
+    "stop",
+    "start",
+]
 
 CACHE_TTL_SECONDS = 300
 

@@ -66,10 +66,16 @@ def parse_gantt(
             col_map["Blackout"] = idx
         elif low == "remarks":
             col_map["Remarks"] = idx
+        elif low in {"baki ap", "baki_ap"}:
+            col_map["BAKI AP"] = idx
+        elif low in {"baki utp", "baki_utp"}:
+            col_map["BAKI UTP"] = idx
+        elif low in {"baki fiber", "baki fibre", "baki_fiber"}:
+            col_map["BAKI FIBER"] = idx
         elif low == "stop":
-            col_map["Blackout Start"] = idx
+            col_map["stop"] = idx
         elif low == "start":
-            col_map["Blackout End"] = idx
+            col_map["start"] = idx
 
     meta_end = max(col_map.values(), default=-1) + 1
     for idx in range(meta_end, len(header)):
@@ -96,15 +102,24 @@ def parse_gantt(
             "Remarks": (
                 str(row.iloc[col_map["Remarks"]]).strip() if "Remarks" in col_map else ""
             ),
-            "Blackout Start": (
-                str(row.iloc[col_map["Blackout Start"]]).strip()
-                if "Blackout Start" in col_map
+            "BAKI AP": (
+                str(row.iloc[col_map["BAKI AP"]]).strip() if "BAKI AP" in col_map else ""
+            ),
+            "BAKI UTP": (
+                str(row.iloc[col_map["BAKI UTP"]]).strip()
+                if "BAKI UTP" in col_map
                 else ""
             ),
-            "Blackout End": (
-                str(row.iloc[col_map["Blackout End"]]).strip()
-                if "Blackout End" in col_map
+            "BAKI FIBER": (
+                str(row.iloc[col_map["BAKI FIBER"]]).strip()
+                if "BAKI FIBER" in col_map
                 else ""
+            ),
+            "stop": (
+                str(row.iloc[col_map["stop"]]).strip() if "stop" in col_map else ""
+            ),
+            "start": (
+                str(row.iloc[col_map["start"]]).strip() if "start" in col_map else ""
             ),
         }
         for date_label in date_cols:
@@ -121,8 +136,11 @@ def parse_gantt(
         ("Location", "Location"),
         ("Blackout", "Blackout"),
         ("Remarks", "Remarks"),
-        ("Blackout Start", "Blackout Start"),
-        ("Blackout End", "Blackout End"),
+        ("BAKI AP", "BAKI AP"),
+        ("BAKI UTP", "BAKI UTP"),
+        ("BAKI FIBER", "BAKI FIBER"),
+        ("stop", "stop"),
+        ("start", "start"),
     ):
         if key in col_map:
             column_indices[display_name] = col_map[key]
@@ -208,6 +226,65 @@ def _location_done_total(
         raw_df, done_row, total_row, percent_row, act_cols
     )
     return done, total
+
+
+def fill_gantt_baki_columns(
+    schedule: pd.DataFrame,
+    raw_df: pd.DataFrame | None,
+    latest_date: str,
+) -> pd.DataFrame:
+    """
+    Fill BAKI AP / BAKI UTP / BAKI FIBER from latest daily progress.
+
+    BAKI AP    = AP Mounting TOTAL − DONE
+    BAKI UTP   = UTP Point TOTAL − DONE
+    BAKI FIBER = 100 − latest Fiber Optic %
+    """
+    out = schedule.copy()
+    for col in ("BAKI AP", "BAKI UTP", "BAKI FIBER"):
+        if col not in out.columns:
+            out[col] = ""
+
+    if raw_df is None or getattr(raw_df, "empty", True) or not str(latest_date).strip():
+        return out
+
+    progress_names = _progress_location_names(raw_df)
+    ap_act = "AP Mounting"
+    utp_act = "UTP Point"
+    fiber_act = "Fiber Optic"
+
+    for idx, row in out.iterrows():
+        gantt_loc = str(row.get("Location", "") or "").strip()
+        matched = resolve_progress_location(gantt_loc, progress_names)
+        if not matched:
+            out.at[idx, "BAKI AP"] = "N/A"
+            out.at[idx, "BAKI UTP"] = "N/A"
+            out.at[idx, "BAKI FIBER"] = "N/A"
+            continue
+
+        done_map, total_map = _location_done_total(raw_df, latest_date, matched)
+        pct_map = location_recalculated_percentages(raw_df, latest_date, matched) or {}
+
+        ap_done, ap_total = done_map.get(ap_act), total_map.get(ap_act)
+        if ap_done is not None and ap_total is not None:
+            out.at[idx, "BAKI AP"] = str(max(0, int(round(float(ap_total) - float(ap_done)))))
+        else:
+            out.at[idx, "BAKI AP"] = "N/A"
+
+        utp_done, utp_total = done_map.get(utp_act), total_map.get(utp_act)
+        if utp_done is not None and utp_total is not None:
+            out.at[idx, "BAKI UTP"] = str(max(0, int(round(float(utp_total) - float(utp_done)))))
+        else:
+            out.at[idx, "BAKI UTP"] = "N/A"
+
+        fiber_pct = pct_map.get(fiber_act)
+        if fiber_pct is not None:
+            remaining = max(0.0, min(100.0, 100.0 - float(fiber_pct)))
+            out.at[idx, "BAKI FIBER"] = f"{remaining:.1f}%"
+        else:
+            out.at[idx, "BAKI FIBER"] = "N/A"
+
+    return out
 
 
 def _format_progress_cell(
@@ -322,8 +399,8 @@ def blackout_timeline_figure(schedule: pd.DataFrame) -> go.Figure | None:
         loc = str(row.get("Location", "") or "").strip()
         if not loc or str(row.get("Blackout", "")).strip().lower() != "yes":
             continue
-        start = _parse_sheet_date(str(row.get("Blackout Start", "") or ""))
-        end = _parse_sheet_date(str(row.get("Blackout End", "") or ""))
+        start = _parse_sheet_date(str(row.get("stop", "") or row.get("Blackout Start", "") or ""))
+        end = _parse_sheet_date(str(row.get("start", "") or row.get("Blackout End", "") or ""))
         if not start or not end:
             continue
         if end < start:
@@ -339,7 +416,7 @@ def blackout_timeline_figure(schedule: pd.DataFrame) -> go.Figure | None:
         x_end="End",
         y="Location",
         color="Blackout",
-        color_discrete_map={"Yes": "#F7941D"},
+        color_discrete_map={"Yes": "#EA9999"},
     )
     fig.update_yaxes(autorange="reversed")
     fig.update_layout(
@@ -390,7 +467,7 @@ def synthetic_blackout_colors(
     *,
     sheet_row_indices: list[int],
     column_indices: dict[str, int],
-    fill: str = "#F4C7C3",
+    fill: str = "#EA9999",
 ) -> dict[tuple[int, int], str]:
     """Fallback red shading for blackout windows when sheet colours are unavailable."""
     colors: dict[tuple[int, int], str] = {}
@@ -400,8 +477,8 @@ def synthetic_blackout_colors(
         row = schedule.iloc[df_i]
         if str(row.get("Blackout", "")).strip().lower() != "yes":
             continue
-        start = _parse_sheet_date(str(row.get("Blackout Start", "") or ""))
-        end = _parse_sheet_date(str(row.get("Blackout End", "") or ""))
+        start = _parse_sheet_date(str(row.get("stop", "") or row.get("Blackout Start", "") or ""))
+        end = _parse_sheet_date(str(row.get("start", "") or row.get("Blackout End", "") or ""))
         if not start or not end:
             continue
         if end < start:

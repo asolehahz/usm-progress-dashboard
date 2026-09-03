@@ -41,6 +41,7 @@ from lib.details import (
 from lib.gantt import (
     blackout_timeline_figure,
     build_current_progress_table,
+    fill_gantt_baki_columns,
     gantt_locations_overall,
     parse_gantt,
     schedule_timeline_table,
@@ -555,8 +556,9 @@ def _style_details_rows(df: pd.DataFrame):
 def render_gantt(parsed: dict[str, dict]):
     st.header("Gantt")
     st.caption(
-        "Schedule from the **gantt** sheet. **Current Progress** uses recalculated "
-        "daily INDUK data for each listed building (same rules as Dashboard)."
+        "Same layout as the **gantt** sheet. **BAKI AP** / **BAKI UTP** / **BAKI FIBER** "
+        "are calculated from the latest daily data: remaining AP and UTP counts "
+        "(TOTAL − DONE) and remaining Fiber % (100 − latest Fiber Optic %)."
     )
 
     raw_gantt = fetch_gantt()
@@ -572,26 +574,29 @@ def render_gantt(parsed: dict[str, dict]):
     raw_df = induk.get("raw_df")
     dates = available_dates(raw_df, newest_first=True) if raw_df is not None else []
     latest_date = dates[0] if dates else ""
+    schedule = fill_gantt_baki_columns(schedule, raw_df, latest_date)
 
     tab_schedule, tab_progress = st.tabs(["Gantt Schedule", "Current Progress"])
 
     with tab_schedule:
         st.subheader("Building schedule")
+        if latest_date:
+            st.caption(f"Baki values from latest daily data: **{latest_date}**")
         meta_view = schedule_timeline_table(schedule, date_cols)
         cell_colors = fetch_gantt_cell_colors()
-        synthetic = synthetic_blackout_colors(
-            schedule,
-            date_cols,
-            sheet_row_indices=list(sheet_row_indices),
-            column_indices=dict(column_indices),
-        )
         if cell_colors:
-            for key, value in synthetic.items():
-                cell_colors.setdefault(key, value)
-            color_note = "Cell colours from the Google Sheet (blackout fill where not coloured)."
+            # Use the sheet fills as-is so painted days match Google Sheets.
+            color_note = "Cell colours copied from the Google Sheet gantt tab."
         else:
-            cell_colors = synthetic
-            color_note = "Blackout windows shown in red (from stop/start dates)."
+            cell_colors = synthetic_blackout_colors(
+                schedule,
+                date_cols,
+                sheet_row_indices=list(sheet_row_indices),
+                column_indices=dict(column_indices),
+            )
+            color_note = (
+                "Sheet colours unavailable — blackout windows shaded from stop/start dates."
+            )
         st.caption(color_note)
         styled = style_gantt_schedule(
             meta_view,
@@ -1028,7 +1033,12 @@ def main():
                     icon="📍",
                     url_path="location-details",
                 ),
-                # Temporarily hidden — restore Gantt page here when needed.
+                st.Page(
+                    page_gantt,
+                    title="Gantt",
+                    icon="📅",
+                    url_path="gantt",
+                ),
             ],
             "Check Daily Data": list(CAMPUS_PAGES.values()),
             # Temporarily hidden — restore Issue & Risk / Daily History here when needed.
