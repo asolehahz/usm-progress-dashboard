@@ -51,6 +51,7 @@ from lib.sheets_client import (
     append_history_row,
     append_issue_row,
     fetch_all_tabs,
+    fetch_csv,
     fetch_details,
     fetch_gantt,
     fetch_gantt_cell_colors,
@@ -998,6 +999,10 @@ def main():
     )
 
     if st.sidebar.button("Refresh data"):
+        # Clear nested sheet caches too — otherwise Refresh only re-parses
+        # stale CSV still held by fetch_csv / fetch_all_tabs (ttl 5 min).
+        fetch_csv.clear()
+        fetch_all_tabs.clear()
         load_data.clear()
         fetch_history.clear()
         fetch_issues.clear()
