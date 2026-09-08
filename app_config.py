@@ -150,6 +150,7 @@ GANTT_META_COLUMNS = [
 ]
 
 # Overtime claim sheets + RM/hour rates (Hari bekerja = Biasa / hari biasa).
+# Kept in app_config so Streamlit Cloud redeploys keep app.py + rates in sync.
 OT_PTD_TAB_NAME = "OT STAFF PTD"
 OT_PTD_GID = "2051099566"
 OT_PIC_TAB_NAME = "OT STAFF PIC"
