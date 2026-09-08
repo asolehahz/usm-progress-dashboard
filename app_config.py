@@ -149,6 +149,37 @@ GANTT_META_COLUMNS = [
     "start",
 ]
 
+# Overtime claim sheets + RM/hour rates (Hari bekerja = Biasa / hari biasa).
+OT_PTD_TAB_NAME = "OT STAFF PTD"
+OT_PTD_GID = "2051099566"
+OT_PIC_TAB_NAME = "OT STAFF PIC"
+OT_PIC_GID = "116665282"
+OT_COLUMNS = [
+    "No",
+    "Tarikh",
+    "Nama Staf",
+    "Gred/Jawatan",
+    "Jabatan/Unit",
+    "Jenis Hari",
+    "Masa mula",
+    "Masa Tamat",
+    "Jumlah",
+    "Lokasi",
+    "Skop kerja",
+]
+OT_RATES_RM_PER_HOUR = {
+    "PTD": {
+        "Biasa": 25.43,
+        "Hujung Minggu": 28.25,
+        "Cuti Umum": 47.46,
+    },
+    "PIC": {
+        "Biasa": 18.00,
+        "Hujung Minggu": 20.00,
+        "Cuti Umum": 28.00,
+    },
+}
+
 CACHE_TTL_SECONDS = 300
 
 # INDUK-only: locations rolled up into these desa groups.

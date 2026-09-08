@@ -23,6 +23,10 @@ from app_config import (
     ISSUES_COLUMNS,
     ISSUES_GID,
     ISSUES_TAB_NAME,
+    OT_PIC_GID,
+    OT_PIC_TAB_NAME,
+    OT_PTD_GID,
+    OT_PTD_TAB_NAME,
     SHEET_ID,
     SHEET_TABS,
     WORK_PLAN_COLUMNS,
@@ -302,6 +306,52 @@ def fetch_gantt_cell_colors() -> dict[tuple[int, int], str]:
             if hex_color:
                 colors[(start_row + r_off, start_col + c_off)] = hex_color
     return colors
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_ot_ptd() -> pd.DataFrame:
+    """Load OT STAFF PTD tab."""
+    from lib.ot_staff import parse_ot_sheet
+
+    if OT_PTD_GID:
+        try:
+            return parse_ot_sheet(fetch_csv(OT_PTD_GID))
+        except Exception:
+            pass
+
+    client = _get_gspread_client()
+    if client:
+        try:
+            spreadsheet = client.open_by_key(SHEET_ID)
+            worksheet = spreadsheet.worksheet(OT_PTD_TAB_NAME)
+            return parse_ot_sheet(pd.DataFrame(worksheet.get_all_values()))
+        except Exception:
+            pass
+
+    return parse_ot_sheet(pd.DataFrame())
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_ot_pic() -> pd.DataFrame:
+    """Load OT STAFF PIC tab."""
+    from lib.ot_staff import parse_ot_sheet
+
+    if OT_PIC_GID:
+        try:
+            return parse_ot_sheet(fetch_csv(OT_PIC_GID))
+        except Exception:
+            pass
+
+    client = _get_gspread_client()
+    if client:
+        try:
+            spreadsheet = client.open_by_key(SHEET_ID)
+            worksheet = spreadsheet.worksheet(OT_PIC_TAB_NAME)
+            return parse_ot_sheet(pd.DataFrame(worksheet.get_all_values()))
+        except Exception:
+            pass
+
+    return parse_ot_sheet(pd.DataFrame())
 
 
 def _parse_details_df(raw: pd.DataFrame) -> pd.DataFrame:
