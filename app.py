@@ -51,8 +51,10 @@ from lib.gantt import (
 )
 from lib.ot_staff import (
     detail_table_for_display,
+    filter_month,
     filter_staff,
     monthly_ot_summary,
+    staff_months,
     staff_names,
 )
 from lib.sheets_client import (
@@ -650,7 +652,7 @@ def render_gantt(parsed: dict[str, dict]):
 
 
 def _render_ot_role_tab(df: pd.DataFrame, role: str, key_prefix: str):
-    """One OT role tab: staff dropdown, monthly summary, detail rows."""
+    """One OT role tab: staff + month dropdowns, monthly summary, detail rows."""
     rates = OT_RATES_RM_PER_HOUR.get(role.upper(), {})
     st.caption(
         f"Rates (**{role}**): "
@@ -673,8 +675,23 @@ def _render_ot_role_tab(df: pd.DataFrame, role: str, key_prefix: str):
         st.warning("No OT rows for this staff.")
         return
 
-    summary = monthly_ot_summary(staff_df, role)
-    st.subheader(f"Overall OT by month — {staff}")
+    months = staff_months(staff_df)
+    month_options = ["All months"] + months
+    selected_month = st.selectbox(
+        "Select month",
+        options=month_options,
+        key=f"{key_prefix}_month",
+    )
+    view_df = filter_month(staff_df, selected_month)
+    if view_df.empty:
+        st.warning("No OT rows for this month.")
+        return
+
+    summary = monthly_ot_summary(view_df, role)
+    title_month = (
+        selected_month if selected_month != "All months" else "all months"
+    )
+    st.subheader(f"Overall OT — {staff} ({title_month})")
     if summary.empty:
         st.info("Could not group OT by month (check Tarikh format).")
     else:
@@ -689,7 +706,7 @@ def _render_ot_role_tab(df: pd.DataFrame, role: str, key_prefix: str):
 
     st.subheader("OT details")
     st.dataframe(
-        detail_table_for_display(staff_df),
+        detail_table_for_display(view_df),
         width="stretch",
         hide_index=True,
     )
@@ -699,7 +716,7 @@ def render_ot_staff():
     st.header("OT Staff")
     st.caption(
         "Overtime from **OT STAFF PTD** and **OT STAFF PIC** sheets. "
-        "Pick a staff name to see monthly OT hours and payment "
+        "Pick a staff name and month to see OT hours and payment "
         "(Biasa = hari biasa / hari bekerja)."
     )
     tab_ptd, tab_pic = st.tabs(["OT PTD", "OT PIC"])

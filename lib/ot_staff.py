@@ -187,6 +187,30 @@ def staff_names(df: pd.DataFrame) -> list[str]:
     return sorted({str(v).strip() for v in df["Nama Staf"] if str(v).strip()})
 
 
+def staff_months(df: pd.DataFrame) -> list[str]:
+    """Month labels for a staff (or full) OT frame, newest first."""
+    if df is None or df.empty or "Month" not in df.columns:
+        return []
+    work = df.copy()
+    work["_month"] = work["Month"].astype(str).str.strip()
+    work = work[work["_month"] != ""]
+    if work.empty:
+        return []
+    if "Date_parsed" in work.columns:
+        work = work.dropna(subset=["Date_parsed"])
+        if not work.empty:
+            work["_ym"] = work["Date_parsed"].map(
+                lambda d: (d.year, d.month) if d is not None else (0, 0)
+            )
+            ordered = (
+                work.sort_values("_ym", ascending=False)["_month"]
+                .drop_duplicates()
+                .tolist()
+            )
+            return ordered
+    return list(dict.fromkeys(work["_month"].tolist()))
+
+
 def filter_staff(df: pd.DataFrame, staff: str) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame(columns=df.columns if df is not None else OT_COLUMNS)
@@ -198,6 +222,16 @@ def filter_staff(df: pd.DataFrame, staff: str) -> pd.DataFrame:
             na_position="last",
         ).reset_index(drop=True)
     return out
+
+
+def filter_month(df: pd.DataFrame, month: str) -> pd.DataFrame:
+    """Filter OT rows to one month label, or return all if month is empty / All."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=df.columns if df is not None else OT_COLUMNS)
+    label = str(month or "").strip()
+    if not label or label.lower() in {"all", "all months", "semua"}:
+        return df.copy()
+    return df[df["Month"].astype(str).str.strip() == label].copy().reset_index(drop=True)
 
 
 def monthly_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
