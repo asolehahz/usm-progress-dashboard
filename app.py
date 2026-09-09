@@ -17,7 +17,6 @@ from app_config import (
     CAMPUS_ICONS,
     DASHBOARD_CHART_ACTIVITIES,
     FRACTION_METRIC_ACTIVITIES,
-    OT_RATES_RM_PER_HOUR,
     campus_sheet_names,
     dashboard_select_options,
     parse_dashboard_selection,
@@ -49,14 +48,6 @@ from lib.gantt import (
     style_gantt_schedule,
     synthetic_blackout_colors,
 )
-from lib.ot_staff import (
-    detail_table_for_display,
-    filter_month,
-    filter_staff,
-    monthly_ot_summary,
-    staff_months,
-    staff_names,
-)
 from lib.sheets_client import (
     append_history_row,
     append_issue_row,
@@ -67,8 +58,6 @@ from lib.sheets_client import (
     fetch_gantt_cell_colors,
     fetch_history,
     fetch_issues,
-    fetch_ot_pic,
-    fetch_ot_ptd,
     fetch_work_plan,
     sync_details_sheet,
     update_issue_status,
@@ -651,81 +640,6 @@ def render_gantt(parsed: dict[str, dict]):
         st.dataframe(progress_table[display_cols], width="stretch", hide_index=True)
 
 
-def _render_ot_role_tab(df: pd.DataFrame, role: str, key_prefix: str):
-    """One OT role tab: staff + month dropdowns, monthly summary, detail rows."""
-    rates = OT_RATES_RM_PER_HOUR.get(role.upper(), {})
-    st.caption(
-        f"Rates (**{role}**): "
-        f"Hari biasa/bekerja RM {rates.get('Biasa', 0):.2f}/jam · "
-        f"Hujung Minggu RM {rates.get('Hujung Minggu', 0):.2f}/jam · "
-        f"Cuti Umum RM {rates.get('Cuti Umum', 0):.2f}/jam"
-    )
-    names = staff_names(df)
-    if not names:
-        st.info(f"No staff rows found in OT STAFF {role} sheet.")
-        return
-
-    staff = st.selectbox(
-        "Select staff name",
-        options=names,
-        key=f"{key_prefix}_staff",
-    )
-    staff_df = filter_staff(df, staff)
-    if staff_df.empty:
-        st.warning("No OT rows for this staff.")
-        return
-
-    months = staff_months(staff_df)
-    month_options = ["All months"] + months
-    selected_month = st.selectbox(
-        "Select month",
-        options=month_options,
-        key=f"{key_prefix}_month",
-    )
-    view_df = filter_month(staff_df, selected_month)
-    if view_df.empty:
-        st.warning("No OT rows for this month.")
-        return
-
-    summary = monthly_ot_summary(view_df, role)
-    title_month = (
-        selected_month if selected_month != "All months" else "all months"
-    )
-    st.subheader(f"Overall OT — {staff} ({title_month})")
-    if summary.empty:
-        st.info("Could not group OT by month (check Tarikh format).")
-    else:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Months", len(summary))
-        c2.metric("Total OT hours", f"{summary['Total Hours'].sum():.2f}")
-        c3.metric(
-            "Total OT pay (RM)",
-            f"{summary['Total Pay (RM)'].sum():,.2f}",
-        )
-        st.dataframe(summary, width="stretch", hide_index=True)
-
-    st.subheader("OT details")
-    st.dataframe(
-        detail_table_for_display(view_df),
-        width="stretch",
-        hide_index=True,
-    )
-
-
-def render_ot_staff():
-    st.header("OT Staff")
-    st.caption(
-        "Overtime from **OT STAFF PTD** and **OT STAFF PIC** sheets. "
-        "Pick a staff name and month to see OT hours and payment "
-        "(Biasa = hari biasa / hari bekerja)."
-    )
-    tab_ptd, tab_pic = st.tabs(["OT PTD", "OT PIC"])
-    with tab_ptd:
-        _render_ot_role_tab(fetch_ot_ptd(), "PTD", "ot_ptd")
-    with tab_pic:
-        _render_ot_role_tab(fetch_ot_pic(), "PIC", "ot_pic")
-
-
 def render_location_details(parsed: dict[str, dict]):
     st.header("Location Details")
     st.caption(
@@ -1070,10 +984,6 @@ def page_gantt():
     render_gantt(_load_or_fail())
 
 
-def page_ot_staff():
-    render_ot_staff()
-
-
 def page_location_details():
     render_location_details(_load_or_fail())
 
@@ -1104,8 +1014,6 @@ def main():
         fetch_work_plan.clear()
         fetch_gantt.clear()
         fetch_gantt_cell_colors.clear()
-        fetch_ot_ptd.clear()
-        fetch_ot_pic.clear()
         fetch_details.clear()
         st.rerun()
 
@@ -1130,12 +1038,6 @@ def main():
                     title="Gantt",
                     icon="📅",
                     url_path="gantt",
-                ),
-                st.Page(
-                    page_ot_staff,
-                    title="OT Staff",
-                    icon="⏱️",
-                    url_path="ot-staff",
                 ),
             ],
             "Check Daily Data": list(CAMPUS_PAGES.values()),
