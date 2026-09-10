@@ -291,32 +291,76 @@ def monthly_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
 
     for month in months:
         part = work[work["Month"].astype(str) == month]
-        h_biasa = float(
-            part.loc[part["Jenis Hari"] == "Biasa", "Hours"].sum()
-        )
-        h_week = float(
-            part.loc[part["Jenis Hari"] == "Hujung Minggu", "Hours"].sum()
-        )
-        h_hol = float(
-            part.loc[part["Jenis Hari"] == "Cuti Umum", "Hours"].sum()
-        )
-        p_biasa = h_biasa * rates["Biasa"]
-        p_week = h_week * rates["Hujung Minggu"]
-        p_hol = h_hol * rates["Cuti Umum"]
-        rows.append(
+        rows.append({"Month": month, **_hours_pay_for_rows(part, rates)})
+    return pd.DataFrame(rows)
+
+
+def _hours_pay_for_rows(part: pd.DataFrame, rates: dict[str, float]) -> dict[str, float]:
+    h_biasa = float(part.loc[part["Jenis Hari"] == "Biasa", "Hours"].sum())
+    h_week = float(part.loc[part["Jenis Hari"] == "Hujung Minggu", "Hours"].sum())
+    h_hol = float(part.loc[part["Jenis Hari"] == "Cuti Umum", "Hours"].sum())
+    p_biasa = h_biasa * rates["Biasa"]
+    p_week = h_week * rates["Hujung Minggu"]
+    p_hol = h_hol * rates["Cuti Umum"]
+    return {
+        "Hours Biasa": round(h_biasa, 2),
+        "Hours Hujung Minggu": round(h_week, 2),
+        "Hours Cuti Umum": round(h_hol, 2),
+        "Total Hours": round(h_biasa + h_week + h_hol, 2),
+        "Pay Biasa (RM)": round(p_biasa, 2),
+        "Pay Hujung Minggu (RM)": round(p_week, 2),
+        "Pay Cuti Umum (RM)": round(p_hol, 2),
+        "Total Pay (RM)": round(p_biasa + p_week + p_hol, 2),
+    }
+
+
+def all_staff_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
+    """
+    Per-staff OT hours + payment across the (already filtered) frame.
+
+    Sorted by Total Pay descending.
+    """
+    rates = OT_RATES_RM_PER_HOUR.get(role.upper(), OT_RATES_RM_PER_HOUR["PIC"])
+    empty_cols = [
+        "Nama Staf",
+        "Jabatan/Unit",
+        "Hours Biasa",
+        "Hours Hujung Minggu",
+        "Hours Cuti Umum",
+        "Total Hours",
+        "Pay Biasa (RM)",
+        "Pay Hujung Minggu (RM)",
+        "Pay Cuti Umum (RM)",
+        "Total Pay (RM)",
+    ]
+    if df is None or df.empty or "Nama Staf" not in df.columns:
+        return pd.DataFrame(columns=empty_cols)
+
+    rows: list[dict[str, object]] = []
+    for staff in staff_names(df):
+        part = df[df["Nama Staf"].astype(str).str.strip() == staff]
+        units = sorted(
             {
-                "Month": month,
-                "Hours Biasa": round(h_biasa, 2),
-                "Hours Hujung Minggu": round(h_week, 2),
-                "Hours Cuti Umum": round(h_hol, 2),
-                "Total Hours": round(h_biasa + h_week + h_hol, 2),
-                "Pay Biasa (RM)": round(p_biasa, 2),
-                "Pay Hujung Minggu (RM)": round(p_week, 2),
-                "Pay Cuti Umum (RM)": round(p_hol, 2),
-                "Total Pay (RM)": round(p_biasa + p_week + p_hol, 2),
+                str(v).strip()
+                for v in part.get("Jabatan/Unit", pd.Series(dtype=str))
+                if str(v).strip()
             }
         )
-    return pd.DataFrame(rows)
+        metrics = _hours_pay_for_rows(part, rates)
+        rows.append(
+            {
+                "Nama Staf": staff,
+                "Jabatan/Unit": ", ".join(units) if units else "",
+                **metrics,
+            }
+        )
+    if not rows:
+        return pd.DataFrame(columns=empty_cols)
+    out = pd.DataFrame(rows)
+    return out.sort_values(
+        by=["Total Pay (RM)", "Nama Staf"],
+        ascending=[False, True],
+    ).reset_index(drop=True)
 
 
 def detail_table_for_display(df: pd.DataFrame) -> pd.DataFrame:

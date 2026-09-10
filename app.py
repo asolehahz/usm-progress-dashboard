@@ -1043,12 +1043,6 @@ def main():
                     url_path="location-details",
                 ),
                 st.Page(
-                    page_gantt,
-                    title="Gantt",
-                    icon="📅",
-                    url_path="gantt",
-                ),
-                st.Page(
                     page_ot_staff,
                     title="OT Staff",
                     icon="⏱️",
@@ -1056,7 +1050,7 @@ def main():
                 ),
             ],
             "Check Daily Data": list(CAMPUS_PAGES.values()),
-            # Temporarily hidden — restore Issue & Risk / Daily History here when needed.
+            # Temporarily hidden — restore Gantt / Issue & Risk / Daily History when needed.
         },
         position="sidebar",
     )
