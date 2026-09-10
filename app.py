@@ -48,6 +48,7 @@ from lib.gantt import (
     style_gantt_schedule,
     synthetic_blackout_colors,
 )
+from lib.ot_ui import render_ot_staff
 from lib.sheets_client import (
     append_history_row,
     append_issue_row,
@@ -58,6 +59,8 @@ from lib.sheets_client import (
     fetch_gantt_cell_colors,
     fetch_history,
     fetch_issues,
+    fetch_ot_pic,
+    fetch_ot_ptd,
     fetch_work_plan,
     sync_details_sheet,
     update_issue_status,
@@ -992,6 +995,10 @@ def page_issues():
     render_issues()
 
 
+def page_ot_staff():
+    render_ot_staff()
+
+
 def main():
     st.sidebar.markdown(
         """
@@ -1015,6 +1022,8 @@ def main():
         fetch_gantt.clear()
         fetch_gantt_cell_colors.clear()
         fetch_details.clear()
+        fetch_ot_ptd.clear()
+        fetch_ot_pic.clear()
         st.rerun()
 
     nav = st.navigation(
@@ -1038,6 +1047,12 @@ def main():
                     title="Gantt",
                     icon="📅",
                     url_path="gantt",
+                ),
+                st.Page(
+                    page_ot_staff,
+                    title="OT Staff",
+                    icon="⏱️",
+                    url_path="ot-staff",
                 ),
             ],
             "Check Daily Data": list(CAMPUS_PAGES.values()),
