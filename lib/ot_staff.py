@@ -187,6 +187,15 @@ def staff_names(df: pd.DataFrame) -> list[str]:
     return sorted({str(v).strip() for v in df["Nama Staf"] if str(v).strip()})
 
 
+def jabatan_units(df: pd.DataFrame) -> list[str]:
+    """Unique Jabatan/Unit values, sorted (blank labels omitted)."""
+    if df is None or df.empty or "Jabatan/Unit" not in df.columns:
+        return []
+    return sorted(
+        {str(v).strip() for v in df["Jabatan/Unit"] if str(v).strip()}
+    )
+
+
 def staff_months(df: pd.DataFrame) -> list[str]:
     """Month labels for a staff (or full) OT frame, newest first."""
     if df is None or df.empty or "Month" not in df.columns:
@@ -209,6 +218,20 @@ def staff_months(df: pd.DataFrame) -> list[str]:
             )
             return ordered
     return list(dict.fromkeys(work["_month"].tolist()))
+
+
+def filter_jabatan(df: pd.DataFrame, jabatan: str) -> pd.DataFrame:
+    """Filter OT rows to one Jabatan/Unit, or return all if empty / All."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=df.columns if df is not None else OT_COLUMNS)
+    label = str(jabatan or "").strip()
+    if not label or label.lower() in {"all", "all jabatan/unit", "semua"}:
+        return df.copy()
+    return (
+        df[df["Jabatan/Unit"].astype(str).str.strip() == label]
+        .copy()
+        .reset_index(drop=True)
+    )
 
 
 def filter_staff(df: pd.DataFrame, staff: str) -> pd.DataFrame:

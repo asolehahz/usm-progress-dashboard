@@ -8,8 +8,10 @@ import streamlit as st
 from app_config import OT_RATES_RM_PER_HOUR
 from lib.ot_staff import (
     detail_table_for_display,
+    filter_jabatan,
     filter_month,
     filter_staff,
+    jabatan_units,
     monthly_ot_summary,
     staff_months,
     staff_names,
@@ -18,7 +20,7 @@ from lib.sheets_client import fetch_ot_pic, fetch_ot_ptd
 
 
 def render_ot_role_tab(df: pd.DataFrame, role: str, key_prefix: str):
-    """One OT role tab: staff + month dropdowns, monthly summary, detail rows."""
+    """One OT role tab: jabatan → staff → month, then summary + detail rows."""
     rates = OT_RATES_RM_PER_HOUR.get(role.upper(), {})
     st.caption(
         f"Rates (**{role}**): "
@@ -26,9 +28,25 @@ def render_ot_role_tab(df: pd.DataFrame, role: str, key_prefix: str):
         f"Hujung Minggu RM {rates.get('Hujung Minggu', 0):.2f}/jam · "
         f"Cuti Umum RM {rates.get('Cuti Umum', 0):.2f}/jam"
     )
-    names = staff_names(df)
-    if not names:
+    if df is None or df.empty:
         st.info(f"No staff rows found in OT STAFF {role} sheet.")
+        return
+
+    units = jabatan_units(df)
+    jabatan_options = ["All"] + units
+    selected_jabatan = st.selectbox(
+        "Select Jabatan/Unit",
+        options=jabatan_options,
+        key=f"{key_prefix}_jabatan",
+    )
+    unit_df = filter_jabatan(df, selected_jabatan)
+    names = staff_names(unit_df)
+    if not names:
+        st.info(
+            "No staff found for this Jabatan/Unit."
+            if selected_jabatan != "All"
+            else f"No staff rows found in OT STAFF {role} sheet."
+        )
         return
 
     staff = st.selectbox(
@@ -36,7 +54,7 @@ def render_ot_role_tab(df: pd.DataFrame, role: str, key_prefix: str):
         options=names,
         key=f"{key_prefix}_staff",
     )
-    staff_df = filter_staff(df, staff)
+    staff_df = filter_staff(unit_df, staff)
     if staff_df.empty:
         st.warning("No OT rows for this staff.")
         return
@@ -82,7 +100,7 @@ def render_ot_staff():
     st.header("OT Staff")
     st.caption(
         "Overtime from **OT STAFF PTD** and **OT STAFF PIC** sheets. "
-        "Pick a staff name and month to see OT hours and payment "
+        "Choose Jabatan/Unit (or All), then staff name and month "
         "(Biasa = hari biasa / hari bekerja)."
     )
     tab_ptd, tab_pic = st.tabs(["OT PTD", "OT PIC"])
