@@ -2,33 +2,41 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 import streamlit as st
 
-from app_config import OT_RATES_RM_PER_HOUR
 from lib.ot_staff import (
     all_staff_ot_summary,
     detail_table_for_display,
+    earliest_ot_date,
     filter_jabatan,
-    filter_month,
+    filter_payment_period,
     filter_staff,
     jabatan_units,
-    monthly_ot_summary,
-    staff_months,
+    payment_period_options,
+    payment_period_ot_summary,
     staff_names,
 )
 from lib.sheets_client import fetch_ot_pic, fetch_ot_ptd
 
 
-def render_ot_role_tab(df: pd.DataFrame, role: str, key_prefix: str):
-    """One OT role tab: jabatan → staff → month, then summary + detail rows."""
-    rates = OT_RATES_RM_PER_HOUR.get(role.upper(), {})
-    st.caption(
-        f"Rates (**{role}**): "
-        f"Hari biasa/bekerja RM {rates.get('Biasa', 0):.2f}/jam · "
-        f"Hujung Minggu RM {rates.get('Hujung Minggu', 0):.2f}/jam · "
-        f"Cuti Umum RM {rates.get('Cuti Umum', 0):.2f}/jam"
-    )
+def _payment_select(
+    df: pd.DataFrame, first_date: date | None, key: str
+) -> tuple[str, pd.DataFrame]:
+    """Payment period dropdown → (selection label, filtered frame)."""
+    options = payment_period_options(df, first_date)
+    labels = ["All payments"] + [label for _num, label in options]
+    selected = st.selectbox("Select payment", options=labels, key=key)
+    view = filter_payment_period(df, selected, first_date)
+    return selected, view
+
+
+def render_ot_role_tab(
+    df: pd.DataFrame, role: str, key_prefix: str, first_date: date | None
+):
+    """One OT role tab: jabatan → staff → payment period, then summary + detail."""
     if df is None or df.empty:
         st.info(f"No staff rows found in OT STAFF {role} sheet.")
         return
@@ -60,31 +68,28 @@ def render_ot_role_tab(df: pd.DataFrame, role: str, key_prefix: str):
         st.warning("No OT rows for this staff.")
         return
 
-    months = staff_months(staff_df)
-    month_options = ["All months"] + months
-    selected_month = st.selectbox(
-        "Select month",
-        options=month_options,
-        key=f"{key_prefix}_month",
+    selected_payment, view_df = _payment_select(
+        staff_df, first_date, f"{key_prefix}_payment"
     )
-    view_df = filter_month(staff_df, selected_month)
     if view_df.empty:
-        st.warning("No OT rows for this month.")
+        st.warning("No OT rows for this payment.")
         return
 
-    summary = monthly_ot_summary(view_df, role)
-    title_month = (
-        selected_month if selected_month != "All months" else "all months"
+    summary = payment_period_ot_summary(view_df, role)
+    title_pay = (
+        selected_payment
+        if selected_payment != "All payments"
+        else "all payments"
     )
-    st.subheader(f"Overall OT — {staff} ({title_month})")
+    st.subheader(f"{staff} — {title_pay}")
     if summary.empty:
-        st.info("Could not group OT by month (check Tarikh format).")
+        st.info("No payment totals to show.")
     else:
         c1, c2, c3 = st.columns(3)
-        c1.metric("Months", len(summary))
+        c1.metric("Payments", len(summary))
         c2.metric("Total OT hours", f"{summary['Total Hours'].sum():.2f}")
         c3.metric(
-            "Total OT pay (RM)",
+            "Amount to be paid (RM)",
             f"{summary['Total Pay (RM)'].sum():,.2f}",
         )
         st.dataframe(summary, width="stretch", hide_index=True)
@@ -97,15 +102,10 @@ def render_ot_role_tab(df: pd.DataFrame, role: str, key_prefix: str):
     )
 
 
-def render_overall_pay_role(df: pd.DataFrame, role: str, key_prefix: str):
+def render_overall_pay_role(
+    df: pd.DataFrame, role: str, key_prefix: str, first_date: date | None
+):
     """Overall bayaran for all staff in one role (PTD or PIC)."""
-    rates = OT_RATES_RM_PER_HOUR.get(role.upper(), {})
-    st.caption(
-        f"Rates (**{role}**): "
-        f"Hari biasa/bekerja RM {rates.get('Biasa', 0):.2f}/jam · "
-        f"Hujung Minggu RM {rates.get('Hujung Minggu', 0):.2f}/jam · "
-        f"Cuti Umum RM {rates.get('Cuti Umum', 0):.2f}/jam"
-    )
     if df is None or df.empty:
         st.info(f"No staff rows found in OT STAFF {role} sheet.")
         return
@@ -119,68 +119,62 @@ def render_overall_pay_role(df: pd.DataFrame, role: str, key_prefix: str):
     )
     unit_df = filter_jabatan(df, selected_jabatan)
 
-    months = staff_months(unit_df)
-    month_options = ["All months"] + months
-    selected_month = st.selectbox(
-        "Select month",
-        options=month_options,
-        key=f"{key_prefix}_month",
+    selected_payment, view_df = _payment_select(
+        unit_df, first_date, f"{key_prefix}_payment"
     )
-    view_df = filter_month(unit_df, selected_month)
     if view_df.empty:
         st.warning("No OT rows for this filter.")
         return
 
-    summary = all_staff_ot_summary(view_df, role)
-    title_month = (
-        selected_month if selected_month != "All months" else "all months"
+    staff_summary = all_staff_ot_summary(view_df, role)
+    period_summary = payment_period_ot_summary(view_df, role)
+    title_pay = (
+        selected_payment
+        if selected_payment != "All payments"
+        else "all payments"
     )
     jabatan_label = (
         selected_jabatan if selected_jabatan != "All" else "all units"
     )
-    st.subheader(f"Overall Pay {role} — {jabatan_label} ({title_month})")
-    if summary.empty:
+    st.subheader(f"Overall Pay {role} — {jabatan_label} — {title_pay}")
+    if staff_summary.empty:
         st.info("No staff OT totals to show.")
         return
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Staff", len(summary))
-    c2.metric("Total OT hours", f"{summary['Total Hours'].sum():.2f}")
+    c1.metric("Staff", len(staff_summary))
+    c2.metric("Total OT hours", f"{staff_summary['Total Hours'].sum():.2f}")
     c3.metric(
-        "Total OT pay (RM)",
-        f"{summary['Total Pay (RM)'].sum():,.2f}",
+        "Amount to be paid (RM)",
+        f"{staff_summary['Total Pay (RM)'].sum():,.2f}",
     )
-    st.dataframe(summary, width="stretch", hide_index=True)
+    if not period_summary.empty and selected_payment == "All payments":
+        st.dataframe(period_summary, width="stretch", hide_index=True)
+    st.dataframe(staff_summary, width="stretch", hide_index=True)
 
 
-def render_overall_bayaran(df_ptd: pd.DataFrame, df_pic: pd.DataFrame):
+def render_overall_bayaran(
+    df_ptd: pd.DataFrame, df_pic: pd.DataFrame, first_date: date | None
+):
     """Third top-level tab: overall pay for all staff, split PTD / PIC."""
-    st.caption(
-        "Bayaran OT semua staff. Pilih **Overall Pay PTD** atau **Overall Pay PIC**, "
-        "kemudian tapis Jabatan/Unit dan bulan."
-    )
     tab_ptd, tab_pic = st.tabs(["Overall Pay PTD", "Overall Pay PIC"])
     with tab_ptd:
-        render_overall_pay_role(df_ptd, "PTD", "ot_overall_ptd")
+        render_overall_pay_role(df_ptd, "PTD", "ot_overall_ptd", first_date)
     with tab_pic:
-        render_overall_pay_role(df_pic, "PIC", "ot_overall_pic")
+        render_overall_pay_role(df_pic, "PIC", "ot_overall_pic", first_date)
 
 
 def render_ot_staff():
     st.header("OT Staff")
-    st.caption(
-        "Overtime from **OT STAFF PTD** and **OT STAFF PIC** sheets. "
-        "Per-staff tabs: Jabatan/Unit → name → month. "
-        "**Overall Bayaran**: all-staff pay totals (PTD / PIC)."
-    )
     df_ptd = fetch_ot_ptd()
     df_pic = fetch_ot_pic()
+    first_date = earliest_ot_date(df_ptd, df_pic)
     tab_ptd, tab_pic, tab_overall = st.tabs(
         ["OT PTD", "OT PIC", "Overall Bayaran"]
     )
     with tab_ptd:
-        render_ot_role_tab(df_ptd, "PTD", "ot_ptd")
+        render_ot_role_tab(df_ptd, "PTD", "ot_ptd", first_date)
     with tab_pic:
-        render_ot_role_tab(df_pic, "PIC", "ot_pic")
+        render_ot_role_tab(df_pic, "PIC", "ot_pic", first_date)
     with tab_overall:
-        render_overall_bayaran(df_ptd, df_pic)
+        render_overall_bayaran(df_ptd, df_pic, first_date)

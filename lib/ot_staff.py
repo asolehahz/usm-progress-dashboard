@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import calendar
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 
@@ -257,6 +258,206 @@ def filter_month(df: pd.DataFrame, month: str) -> pd.DataFrame:
     return df[df["Month"].astype(str).str.strip() == label].copy().reset_index(drop=True)
 
 
+def _ordinal(n: int) -> str:
+    if 10 <= (n % 100) <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def _add_months(d: date, months: int) -> date:
+    month_index = d.month - 1 + months
+    year = d.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(d.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _fmt_dmy(d: date) -> str:
+    return f"{d.day}/{d.month}/{d.year}"
+
+
+def earliest_ot_date(*frames: pd.DataFrame) -> date | None:
+    """Earliest parsed OT date across one or more frames."""
+    earliest: date | None = None
+    for df in frames:
+        if df is None or df.empty or "Date_parsed" not in df.columns:
+            continue
+        for value in df["Date_parsed"].tolist():
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                continue
+            if isinstance(value, datetime):
+                d = value.date()
+            elif isinstance(value, date):
+                d = value
+            else:
+                continue
+            if earliest is None or d < earliest:
+                earliest = d
+    return earliest
+
+
+def payment_period_bounds(first_date: date, period_num: int) -> tuple[date, date]:
+    """
+    Payment cycles:
+      1st: first recorded date → 25/8 (same year as first date)
+      2nd: 26/8 → 25/9
+      3rd: 26/9 → 25/10
+      …
+    """
+    if period_num < 1:
+        raise ValueError("period_num must be >= 1")
+    p1_end = date(first_date.year, 8, 25)
+    if period_num == 1:
+        return first_date, p1_end
+    end = _add_months(p1_end, period_num - 1)
+    start = _add_months(p1_end, period_num - 2) + timedelta(days=1)
+    return start, end
+
+
+def payment_period_label(first_date: date, period_num: int) -> str:
+    start, end = payment_period_bounds(first_date, period_num)
+    return (
+        f"{_ordinal(period_num)} payment "
+        f"({_fmt_dmy(start)} – {_fmt_dmy(end)})"
+    )
+
+
+def payment_period_number_for_date(d: date, first_date: date) -> int | None:
+    """Which payment period a calendar date falls into (None if before period 1)."""
+    if d < first_date:
+        return None
+    p1_end = date(first_date.year, 8, 25)
+    if d <= p1_end:
+        return 1
+    # Months after Aug 25: period = 2 + months from Sep baseline
+    # end of period n = Aug 25 + (n-1) months; find smallest n with d <= end
+    n = 2
+    while True:
+        end = _add_months(p1_end, n - 1)
+        if d <= end:
+            return n
+        n += 1
+        if n > 240:  # safety
+            return None
+
+
+def attach_payment_periods(
+    df: pd.DataFrame, first_date: date | None
+) -> pd.DataFrame:
+    """Add Payment # and Payment columns from Date_parsed."""
+    if df is None:
+        return pd.DataFrame(columns=OT_COLUMNS + ["Payment #", "Payment"])
+    if df.empty:
+        cols = list(df.columns)
+        for extra in ("Payment #", "Payment"):
+            if extra not in cols:
+                cols.append(extra)
+        return pd.DataFrame(columns=cols)
+    out = df.copy()
+    if first_date is None or "Date_parsed" not in out.columns:
+        out["Payment #"] = pd.NA
+        out["Payment"] = ""
+        return out
+
+    nums: list[int | None] = []
+    labels: list[str] = []
+    for value in out["Date_parsed"].tolist():
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            nums.append(None)
+            labels.append("")
+            continue
+        d = value.date() if isinstance(value, datetime) else value
+        if not isinstance(d, date):
+            nums.append(None)
+            labels.append("")
+            continue
+        num = payment_period_number_for_date(d, first_date)
+        nums.append(num)
+        labels.append(
+            payment_period_label(first_date, num) if num is not None else ""
+        )
+    out["Payment #"] = nums
+    out["Payment"] = labels
+    return out
+
+
+def payment_period_options(
+    df: pd.DataFrame, first_date: date | None
+) -> list[tuple[int, str]]:
+    """(period_num, label) for periods present in df, ascending."""
+    if first_date is None or df is None or df.empty:
+        return []
+    work = attach_payment_periods(df, first_date)
+    nums = sorted(
+        {
+            int(n)
+            for n in work["Payment #"].tolist()
+            if n is not None and not (isinstance(n, float) and pd.isna(n))
+        }
+    )
+    return [(n, payment_period_label(first_date, n)) for n in nums]
+
+
+def filter_payment_period(
+    df: pd.DataFrame, period: str | int, first_date: date | None
+) -> pd.DataFrame:
+    """Filter to one payment period, or all if empty / All."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=df.columns if df is not None else OT_COLUMNS)
+    label = str(period or "").strip()
+    if not label or label.lower() in {"all", "all payments", "semua"}:
+        return attach_payment_periods(df, first_date)
+
+    work = attach_payment_periods(df, first_date)
+    if isinstance(period, int) or str(period).isdigit():
+        num = int(period)
+        return work[work["Payment #"] == num].copy().reset_index(drop=True)
+    return (
+        work[work["Payment"].astype(str) == label]
+        .copy()
+        .reset_index(drop=True)
+    )
+
+
+def payment_period_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
+    """Per-payment-period OT hours + pay (df should already include Payment cols)."""
+    rates = OT_RATES_RM_PER_HOUR.get(role.upper(), OT_RATES_RM_PER_HOUR["PIC"])
+    empty_cols = [
+        "Payment",
+        "Hours Biasa",
+        "Hours Hujung Minggu",
+        "Hours Cuti Umum",
+        "Total Hours",
+        "Pay Biasa (RM)",
+        "Pay Hujung Minggu (RM)",
+        "Pay Cuti Umum (RM)",
+        "Total Pay (RM)",
+    ]
+    if df is None or df.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    work = df.copy()
+    if "Payment #" not in work.columns or "Payment" not in work.columns:
+        return pd.DataFrame(columns=empty_cols)
+
+    rows: list[dict[str, object]] = []
+    ordered = (
+        work.dropna(subset=["Payment #"])
+        .sort_values("Payment #")["Payment #"]
+        .drop_duplicates()
+        .tolist()
+    )
+    for num in ordered:
+        part = work[work["Payment #"] == num]
+        label = ""
+        if not part.empty:
+            label = str(part["Payment"].iloc[0] or "")
+        rows.append({"Payment": label, **_hours_pay_for_rows(part, rates)})
+    return pd.DataFrame(rows)
+
+
 def monthly_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
     """
     Per-month OT hours + payment for one staff (already filtered).
@@ -368,6 +569,7 @@ def detail_table_for_display(df: pd.DataFrame) -> pd.DataFrame:
     cols = [
         "No",
         "Tarikh",
+        "Payment",
         "Jenis Hari",
         "Masa mula",
         "Masa Tamat",
