@@ -298,6 +298,26 @@ def earliest_ot_date(*frames: pd.DataFrame) -> date | None:
     return earliest
 
 
+def latest_ot_date(*frames: pd.DataFrame) -> date | None:
+    """Latest parsed OT date across one or more frames."""
+    latest: date | None = None
+    for df in frames:
+        if df is None or df.empty or "Date_parsed" not in df.columns:
+            continue
+        for value in df["Date_parsed"].tolist():
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                continue
+            if isinstance(value, datetime):
+                d = value.date()
+            elif isinstance(value, date):
+                d = value
+            else:
+                continue
+            if latest is None or d > latest:
+                latest = d
+    return latest
+
+
 def payment_period_bounds(first_date: date, period_num: int) -> tuple[date, date]:
     """
     Payment cycles:
@@ -310,7 +330,8 @@ def payment_period_bounds(first_date: date, period_num: int) -> tuple[date, date
         raise ValueError("period_num must be >= 1")
     p1_end = date(first_date.year, 8, 25)
     if period_num == 1:
-        return first_date, p1_end
+        start = first_date if first_date <= p1_end else p1_end
+        return start, p1_end
     end = _add_months(p1_end, period_num - 1)
     start = _add_months(p1_end, period_num - 2) + timedelta(days=1)
     return start, end
@@ -329,18 +350,38 @@ def payment_period_number_for_date(d: date, first_date: date) -> int | None:
     if d < first_date:
         return None
     p1_end = date(first_date.year, 8, 25)
-    if d <= p1_end:
+    if first_date <= p1_end and d <= p1_end:
         return 1
-    # Months after Aug 25: period = 2 + months from Sep baseline
-    # end of period n = Aug 25 + (n-1) months; find smallest n with d <= end
+    if d <= p1_end:
+        # first_date is after Aug 25; nothing belongs to period 1
+        return None
     n = 2
     while True:
         end = _add_months(p1_end, n - 1)
         if d <= end:
             return n
         n += 1
-        if n > 240:  # safety
+        if n > 240:
             return None
+
+
+def periods_through_latest(
+    first_date: date | None, last_date: date | None
+) -> list[int]:
+    """All payment period numbers from the first applicable through latest date."""
+    if first_date is None or last_date is None:
+        return []
+    start_n = payment_period_number_for_date(first_date, first_date)
+    end_n = payment_period_number_for_date(last_date, first_date)
+    if start_n is None and end_n is None:
+        return []
+    if start_n is None:
+        start_n = end_n
+    if end_n is None:
+        end_n = start_n
+    if start_n is None or end_n is None:
+        return []
+    return list(range(int(start_n), int(end_n) + 1))
 
 
 def attach_payment_periods(
@@ -384,19 +425,25 @@ def attach_payment_periods(
 
 
 def payment_period_options(
-    df: pd.DataFrame, first_date: date | None
+    df: pd.DataFrame,
+    first_date: date | None,
+    *,
+    last_date: date | None = None,
 ) -> list[tuple[int, str]]:
-    """(period_num, label) for periods present in df, ascending."""
-    if first_date is None or df is None or df.empty:
+    """(period_num, label) for every period from first through latest date."""
+    if first_date is None:
         return []
-    work = attach_payment_periods(df, first_date)
-    nums = sorted(
-        {
-            int(n)
-            for n in work["Payment #"].tolist()
-            if n is not None and not (isinstance(n, float) and pd.isna(n))
-        }
-    )
+    end = last_date or latest_ot_date(df)
+    nums = periods_through_latest(first_date, end)
+    if not nums and df is not None and not df.empty:
+        work = attach_payment_periods(df, first_date)
+        nums = sorted(
+            {
+                int(n)
+                for n in work["Payment #"].tolist()
+                if n is not None and not (isinstance(n, float) and pd.isna(n))
+            }
+        )
     return [(n, payment_period_label(first_date, n)) for n in nums]
 
 
@@ -413,7 +460,11 @@ def filter_payment_period(
     work = attach_payment_periods(df, first_date)
     if isinstance(period, int) or str(period).isdigit():
         num = int(period)
-        return work[work["Payment #"] == num].copy().reset_index(drop=True)
+        return (
+            work[work["Payment #"].apply(lambda v: v is not None and int(v) == num)]
+            .copy()
+            .reset_index(drop=True)
+        )
     return (
         work[work["Payment"].astype(str) == label]
         .copy()
@@ -421,8 +472,31 @@ def filter_payment_period(
     )
 
 
-def payment_period_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
-    """Per-payment-period OT hours + pay (df should already include Payment cols)."""
+def _empty_hours_pay() -> dict[str, float]:
+    return {
+        "Hours Biasa": 0.0,
+        "Hours Hujung Minggu": 0.0,
+        "Hours Cuti Umum": 0.0,
+        "Total Hours": 0.0,
+        "Pay Biasa (RM)": 0.0,
+        "Pay Hujung Minggu (RM)": 0.0,
+        "Pay Cuti Umum (RM)": 0.0,
+        "Total Pay (RM)": 0.0,
+    }
+
+
+def payment_period_ot_summary(
+    df: pd.DataFrame,
+    role: str,
+    first_date: date | None = None,
+    *,
+    last_date: date | None = None,
+    include_total: bool = True,
+) -> pd.DataFrame:
+    """
+    Per-payment-period OT hours + pay for 1st, 2nd, … through latest date,
+    with an optional TOTAL row.
+    """
     rates = OT_RATES_RM_PER_HOUR.get(role.upper(), OT_RATES_RM_PER_HOUR["PIC"])
     empty_cols = [
         "Payment",
@@ -440,22 +514,66 @@ def payment_period_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
 
     work = df.copy()
     if "Payment #" not in work.columns or "Payment" not in work.columns:
-        return pd.DataFrame(columns=empty_cols)
+        work = attach_payment_periods(work, first_date)
+
+    end = last_date or latest_ot_date(work)
+    period_nums = periods_through_latest(first_date, end) if first_date else []
+    if not period_nums:
+        period_nums = sorted(
+            {
+                int(n)
+                for n in work["Payment #"].tolist()
+                if n is not None and not (isinstance(n, float) and pd.isna(n))
+            }
+        )
 
     rows: list[dict[str, object]] = []
-    ordered = (
-        work.dropna(subset=["Payment #"])
-        .sort_values("Payment #")["Payment #"]
-        .drop_duplicates()
-        .tolist()
-    )
-    for num in ordered:
-        part = work[work["Payment #"] == num]
-        label = ""
-        if not part.empty:
-            label = str(part["Payment"].iloc[0] or "")
-        rows.append({"Payment": label, **_hours_pay_for_rows(part, rates)})
-    return pd.DataFrame(rows)
+    for num in period_nums:
+        part = work[
+            work["Payment #"].apply(
+                lambda v, n=num: v is not None
+                and not (isinstance(v, float) and pd.isna(v))
+                and int(v) == n
+            )
+        ]
+        label = (
+            payment_period_label(first_date, num)
+            if first_date is not None
+            else (
+                str(part["Payment"].iloc[0])
+                if not part.empty
+                else f"{_ordinal(num)} payment"
+            )
+        )
+        metrics = (
+            _hours_pay_for_rows(part, rates) if not part.empty else _empty_hours_pay()
+        )
+        rows.append({"Payment": label, **metrics})
+
+    out = pd.DataFrame(rows, columns=empty_cols)
+    if include_total and not out.empty:
+        total = {"Payment": "TOTAL"}
+        for col in empty_cols[1:]:
+            total[col] = round(float(out[col].sum()), 2)
+        out = pd.concat([out, pd.DataFrame([total])], ignore_index=True)
+    return out
+
+
+def append_total_row(
+    df: pd.DataFrame, label_col: str, label: str = "TOTAL"
+) -> pd.DataFrame:
+    """Append a numeric TOTAL row for display tables."""
+    if df is None or df.empty:
+        return df
+    total: dict[str, object] = {}
+    for col in df.columns:
+        if col == label_col:
+            total[col] = label
+        elif pd.api.types.is_numeric_dtype(df[col]):
+            total[col] = round(float(df[col].sum()), 2)
+        else:
+            total[col] = ""
+    return pd.concat([df, pd.DataFrame([total])], ignore_index=True)
 
 
 def monthly_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
