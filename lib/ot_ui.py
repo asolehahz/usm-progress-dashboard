@@ -152,19 +152,10 @@ def render_ot_role_tab(
         f"{staff} — all payments",
     )
 
-    selected_payment, view_df = _payment_select(
-        staff_df, first_date, staff_last, f"{key_prefix}_payment"
-    )
-    st.subheader(
-        "OT details"
-        if selected_payment == "All payments"
-        else f"OT details — {selected_payment}"
-    )
-    if view_df.empty:
-        st.warning("No OT rows for this payment.")
-        return
+    st.subheader("OT details")
+    tagged = attach_payment_periods(staff_df, first_date)
     st.dataframe(
-        detail_table_for_display(view_df),
+        detail_table_for_display(tagged),
         width="stretch",
         hide_index=True,
     )
