@@ -18,6 +18,7 @@ from lib.ot_staff import (
     filter_staff,
     jabatan_units,
     latest_ot_date,
+    payment_period_label,
     payment_period_options,
     payment_period_ot_summary,
     staff_names,
@@ -46,7 +47,7 @@ def _show_payment_totals(
     last_date: date | None,
     title: str,
 ):
-    """Always list 1st / 2nd / … payments plus TOTAL."""
+    """Summary metrics: overall total + each payment (1st, 2nd, …), then table."""
     tagged = attach_payment_periods(df, first_date)
     summary = payment_period_ot_summary(
         tagged,
@@ -54,24 +55,52 @@ def _show_payment_totals(
         first_date,
         last_date=last_date,
         include_total=True,
+        only_present=True,
     )
     st.subheader(title)
     if summary.empty:
         st.info("No payment totals to show.")
         return summary
 
-    data_rows = summary[summary["Payment"] != "TOTAL"]
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Payments", len(data_rows))
-    c2.metric(
-        "Total OT hours",
-        f"{float(data_rows['Total Hours'].sum()) if not data_rows.empty else 0:.2f}",
+    display = summary.drop(columns=["Payment #"], errors="ignore")
+    period_rows = summary[
+        summary["Payment"].astype(str).str.strip().str.lower() != "overall total"
+    ].copy()
+    overall_pay = (
+        float(period_rows["Total Pay (RM)"].sum()) if not period_rows.empty else 0.0
     )
-    c3.metric(
-        "Amount to be paid (RM)",
-        f"{float(data_rows['Total Pay (RM)'].sum()) if not data_rows.empty else 0:,.2f}",
+    overall_hours = (
+        float(period_rows["Total Hours"].sum()) if not period_rows.empty else 0.0
     )
-    st.dataframe(summary, width="stretch", hide_index=True)
+
+    # Highlight overall total + 1st payment (then 2nd, 3rd… if present)
+    metric_items: list[tuple[str, str]] = [
+        ("Overall total (RM)", f"{overall_pay:,.2f}"),
+        ("Overall total (hours)", f"{overall_hours:.2f}"),
+    ]
+    for _, row in period_rows.sort_values("Payment #").iterrows():
+        num = row.get("Payment #")
+        try:
+            num_i = int(num)
+        except (TypeError, ValueError):
+            continue
+        short = (
+            payment_period_label(first_date, num_i).split(" (")[0]
+            if first_date is not None
+            else f"Payment {num_i}"
+        )
+        metric_items.append(
+            (f"{short} (RM)", f"{float(row['Total Pay (RM)']):,.2f}")
+        )
+
+    # Show up to 4 metrics per row
+    for i in range(0, len(metric_items), 4):
+        chunk = metric_items[i : i + 4]
+        cols = st.columns(len(chunk))
+        for col, (label, value) in zip(cols, chunk):
+            col.metric(label, value)
+
+    st.dataframe(display, width="stretch", hide_index=True)
     return summary
 
 
@@ -187,16 +216,16 @@ def render_overall_pay_role(
         st.info("No staff OT totals to show.")
         return
 
-    staff_summary = append_total_row(staff_summary, "Nama Staf")
-    data_rows = staff_summary[staff_summary["Nama Staf"] != "TOTAL"]
+    staff_summary = append_total_row(staff_summary, "Nama Staf", label="Overall total")
+    data_rows = staff_summary[staff_summary["Nama Staf"] != "Overall total"]
     c1, c2, c3 = st.columns(3)
     c1.metric("Staff", len(data_rows))
     c2.metric(
-        "Total OT hours",
+        "Overall total (hours)",
         f"{float(data_rows['Total Hours'].sum()) if not data_rows.empty else 0:.2f}",
     )
     c3.metric(
-        "Amount to be paid (RM)",
+        "Overall total (RM)",
         f"{float(data_rows['Total Pay (RM)'].sum()) if not data_rows.empty else 0:,.2f}",
     )
     st.dataframe(staff_summary, width="stretch", hide_index=True)

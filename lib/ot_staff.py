@@ -492,10 +492,11 @@ def payment_period_ot_summary(
     *,
     last_date: date | None = None,
     include_total: bool = True,
+    only_present: bool = True,
 ) -> pd.DataFrame:
     """
-    Per-payment-period OT hours + pay for 1st, 2nd, … through latest date,
-    with an optional TOTAL row.
+    Per-payment-period OT hours + pay (1st, 2nd, …),
+    with an optional Overall total row.
     """
     rates = OT_RATES_RM_PER_HOUR.get(role.upper(), OT_RATES_RM_PER_HOUR["PIC"])
     empty_cols = [
@@ -516,16 +517,20 @@ def payment_period_ot_summary(
     if "Payment #" not in work.columns or "Payment" not in work.columns:
         work = attach_payment_periods(work, first_date)
 
-    end = last_date or latest_ot_date(work)
-    period_nums = periods_through_latest(first_date, end) if first_date else []
-    if not period_nums:
-        period_nums = sorted(
-            {
-                int(n)
-                for n in work["Payment #"].tolist()
-                if n is not None and not (isinstance(n, float) and pd.isna(n))
-            }
-        )
+    present_nums = sorted(
+        {
+            int(n)
+            for n in work["Payment #"].tolist()
+            if n is not None and not (isinstance(n, float) and pd.isna(n))
+        }
+    )
+    if only_present:
+        period_nums = present_nums
+    else:
+        end = last_date or latest_ot_date(work)
+        period_nums = periods_through_latest(first_date, end) if first_date else []
+        if not period_nums:
+            period_nums = present_nums
 
     rows: list[dict[str, object]] = []
     for num in period_nums:
@@ -536,6 +541,8 @@ def payment_period_ot_summary(
                 and int(v) == n
             )
         ]
+        if only_present and part.empty:
+            continue
         label = (
             payment_period_label(first_date, num)
             if first_date is not None
@@ -548,11 +555,12 @@ def payment_period_ot_summary(
         metrics = (
             _hours_pay_for_rows(part, rates) if not part.empty else _empty_hours_pay()
         )
-        rows.append({"Payment": label, **metrics})
+        rows.append({"Payment": label, "Payment #": num, **metrics})
 
-    out = pd.DataFrame(rows, columns=empty_cols)
+    out_cols = ["Payment", "Payment #"] + empty_cols[1:]
+    out = pd.DataFrame(rows, columns=out_cols) if rows else pd.DataFrame(columns=out_cols)
     if include_total and not out.empty:
-        total = {"Payment": "TOTAL"}
+        total = {"Payment": "Overall total", "Payment #": None}
         for col in empty_cols[1:]:
             total[col] = round(float(out[col].sum()), 2)
         out = pd.concat([out, pd.DataFrame([total])], ignore_index=True)
