@@ -359,6 +359,20 @@ def render_change_summary(summary: pd.DataFrame, prev_date: str, latest_date: st
     st.dataframe(summary, width="stretch", hide_index=True)
 
 
+def _displayed_data_date(overall: pd.DataFrame, raw_df=None) -> str:
+    """Latest progress date shown on the dashboard for the current selection."""
+    if overall is not None and not getattr(overall, "empty", True):
+        if "Date" in overall.columns:
+            value = str(overall.iloc[-1].get("Date", "") or "").strip()
+            if value:
+                return value
+    if raw_df is not None and not getattr(raw_df, "empty", True):
+        dates = available_dates(raw_df, newest_first=True)
+        if dates:
+            return str(dates[0])
+    return ""
+
+
 def render_dashboard(parsed: dict[str, dict]):
     st.header("Dashboard")
 
@@ -376,6 +390,9 @@ def render_dashboard(parsed: dict[str, dict]):
         building_increases: dict[str, list[str]] = {}
         prev_date = ""
         latest_date = ""
+        data_date = _displayed_data_date(overall, raw_df)
+        if data_date:
+            st.markdown(f"**Displayed data date:** {data_date}")
         if raw_df is not None and overall is not None and len(overall) >= 2:
             prev_date = str(overall.iloc[-2].get("Date", ""))
             latest_date = str(overall.iloc[-1].get("Date", ""))
@@ -398,6 +415,9 @@ def render_dashboard(parsed: dict[str, dict]):
     overall = data.get("overall", pd.DataFrame())
     raw_df = data.get("raw_df")
     icon = CAMPUS_ICONS.get(campus, "🏫")
+    data_date = _displayed_data_date(overall, raw_df)
+    if data_date:
+        st.markdown(f"**Displayed data date:** {data_date}")
     render_activity_average_panel(
         overall,
         title=f"{icon} {campus}",
