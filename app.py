@@ -374,7 +374,7 @@ def _displayed_data_date(overall: pd.DataFrame, raw_df=None) -> str:
 
 
 def render_dashboard(parsed: dict[str, dict]):
-    st.header("Dashboard")
+    st.header("USM Progress Dashboard")
 
     selected = st.selectbox(
         "Select campus / desa",
@@ -392,7 +392,7 @@ def render_dashboard(parsed: dict[str, dict]):
         latest_date = ""
         data_date = _displayed_data_date(overall, raw_df)
         if data_date:
-            st.markdown(f"**Displayed data date:** {data_date}")
+            st.info(f"**Progress data date:** {data_date}")
         if raw_df is not None and overall is not None and len(overall) >= 2:
             prev_date = str(overall.iloc[-2].get("Date", ""))
             latest_date = str(overall.iloc[-1].get("Date", ""))
@@ -417,7 +417,7 @@ def render_dashboard(parsed: dict[str, dict]):
     icon = CAMPUS_ICONS.get(campus, "🏫")
     data_date = _displayed_data_date(overall, raw_df)
     if data_date:
-        st.markdown(f"**Displayed data date:** {data_date}")
+        st.info(f"**Progress data date:** {data_date}")
     render_activity_average_panel(
         overall,
         title=f"{icon} {campus}",
