@@ -159,6 +159,8 @@ OT_COLUMNS = [
     "No",
     "Tarikh",
     "Nama Staf",
+    "No Telefon",
+    "No IC",
     "Gred/Jawatan",
     "Jabatan/Unit",
     "Jenis Hari",

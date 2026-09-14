@@ -91,6 +91,10 @@ def parse_ot_sheet(raw: pd.DataFrame) -> pd.DataFrame:
             col_map["Tarikh"] = idx
         elif low in {"nama staf", "nama staff", "staff"}:
             col_map["Nama Staf"] = idx
+        elif "telefon" in low or low in {"phone", "tel", "mobile"}:
+            col_map["No Telefon"] = idx
+        elif low in {"ic", "no ic", "no. ic"} or "kad pengenalan" in low:
+            col_map["No IC"] = idx
         elif "gred" in low or "jawatan" in low:
             col_map["Gred/Jawatan"] = idx
         elif "jabatan" in low or "unit" in low:
@@ -139,6 +143,16 @@ def parse_ot_sheet(raw: pd.DataFrame) -> pd.DataFrame:
                 ),
                 "Tarikh": tarikh,
                 "Nama Staf": staff,
+                "No Telefon": (
+                    str(row.iloc[col_map["No Telefon"]]).strip()
+                    if "No Telefon" in col_map
+                    else ""
+                ),
+                "No IC": (
+                    str(row.iloc[col_map["No IC"]]).strip()
+                    if "No IC" in col_map
+                    else ""
+                ),
                 "Gred/Jawatan": (
                     str(row.iloc[col_map["Gred/Jawatan"]]).strip()
                     if "Gred/Jawatan" in col_map
@@ -641,6 +655,14 @@ def _hours_pay_for_rows(part: pd.DataFrame, rates: dict[str, float]) -> dict[str
     }
 
 
+def first_nonempty_value(values) -> str:
+    for v in values:
+        text = str(v or "").strip()
+        if text and text.upper() not in {"N/A", "NA", "-"}:
+            return text
+    return ""
+
+
 def all_staff_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
     """
     Per-staff OT hours + payment across the (already filtered) frame.
@@ -650,6 +672,8 @@ def all_staff_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
     rates = OT_RATES_RM_PER_HOUR.get(role.upper(), OT_RATES_RM_PER_HOUR["PIC"])
     empty_cols = [
         "Nama Staf",
+        "No Telefon",
+        "No IC",
         "Jabatan/Unit",
         "Hours Biasa",
         "Hours Hujung Minggu",
@@ -677,6 +701,10 @@ def all_staff_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
         rows.append(
             {
                 "Nama Staf": staff,
+                "No Telefon": first_nonempty_value(
+                    part.get("No Telefon", pd.Series(dtype=str))
+                ),
+                "No IC": first_nonempty_value(part.get("No IC", pd.Series(dtype=str))),
                 "Jabatan/Unit": ", ".join(units) if units else "",
                 **metrics,
             }
@@ -696,6 +724,8 @@ def detail_table_for_display(df: pd.DataFrame) -> pd.DataFrame:
         "No",
         "Tarikh",
         "Payment",
+        "No Telefon",
+        "No IC",
         "Jenis Hari",
         "Masa mula",
         "Masa Tamat",

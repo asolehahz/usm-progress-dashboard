@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from lib.ot_staff import (
+    first_nonempty_value,
     all_staff_ot_summary,
     append_total_row,
     attach_payment_periods,
@@ -142,6 +143,12 @@ def render_ot_role_tab(
     if staff_df.empty:
         st.warning("No OT rows for this staff.")
         return
+
+    telefon = first_nonempty_value(staff_df.get("No Telefon", pd.Series(dtype=str)))
+    ic = first_nonempty_value(staff_df.get("No IC", pd.Series(dtype=str)))
+    c1, c2 = st.columns(2)
+    c1.metric("No Telefon", telefon or "—")
+    c2.metric("No IC", ic or "—")
 
     staff_last = latest_ot_date(staff_df) or last_date
     _show_payment_totals(
