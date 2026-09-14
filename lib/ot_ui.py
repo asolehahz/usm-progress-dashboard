@@ -8,23 +8,48 @@ import pandas as pd
 import streamlit as st
 
 from lib.ot_staff import (
-    first_nonempty_value,
     all_staff_ot_summary,
     append_total_row,
+    apply_whatsapp_telefon_links,
     attach_payment_periods,
     detail_table_for_display,
     earliest_ot_date,
     filter_jabatan,
     filter_payment_period,
     filter_staff,
+    first_nonempty_value,
     jabatan_units,
     latest_ot_date,
     payment_period_label,
     payment_period_options,
     payment_period_ot_summary,
     staff_names,
+    whatsapp_url_from_phone,
 )
 from lib.sheets_client import fetch_ot_pic, fetch_ot_ptd
+
+
+def _telefon_column_config() -> dict:
+    return {
+        "No Telefon": st.column_config.LinkColumn(
+            "No Telefon",
+            help="Open WhatsApp chat",
+            display_text="https://wa\\.me/(\\d+)",
+            max_chars=20,
+        )
+    }
+
+
+def _show_ot_dataframe(df: pd.DataFrame):
+    """Show OT table with clickable WhatsApp links on No Telefon."""
+    view = apply_whatsapp_telefon_links(df)
+    config = _telefon_column_config() if "No Telefon" in view.columns else None
+    st.dataframe(
+        view,
+        width="stretch",
+        hide_index=True,
+        column_config=config,
+    )
 
 
 def _payment_select(
@@ -146,11 +171,18 @@ def render_ot_role_tab(
 
     telefon = first_nonempty_value(staff_df.get("No Telefon", pd.Series(dtype=str))) or "—"
     ic = first_nonempty_value(staff_df.get("No IC", pd.Series(dtype=str))) or "—"
+    wa = whatsapp_url_from_phone(telefon)
+    if wa:
+        telefon_html = (
+            f'<a href="{wa}" target="_blank" rel="noopener noreferrer">{telefon}</a>'
+        )
+    else:
+        telefon_html = telefon
     st.markdown(
         f"<div style='font-size:0.85rem; line-height:1.35; margin:-0.35rem 0 0.75rem 0; "
         f"opacity:0.85;'>"
         f"<div><strong>{staff}</strong></div>"
-        f"<div>No Telefon: {telefon}</div>"
+        f"<div>No Telefon: {telefon_html}</div>"
         f"<div>No IC: {ic}</div>"
         f"</div>",
         unsafe_allow_html=True,
@@ -167,11 +199,7 @@ def render_ot_role_tab(
 
     st.subheader("OT details")
     tagged = attach_payment_periods(staff_df, first_date)
-    st.dataframe(
-        detail_table_for_display(tagged),
-        width="stretch",
-        hide_index=True,
-    )
+    _show_ot_dataframe(detail_table_for_display(tagged))
 
 
 def render_overall_pay_role(
@@ -232,7 +260,7 @@ def render_overall_pay_role(
         "Overall total (RM)",
         f"{float(data_rows['Total Pay (RM)'].sum()) if not data_rows.empty else 0:,.2f}",
     )
-    st.dataframe(staff_summary, width="stretch", hide_index=True)
+    _show_ot_dataframe(staff_summary)
 
 
 def render_overall_bayaran(

@@ -663,6 +663,47 @@ def first_nonempty_value(values) -> str:
     return ""
 
 
+def whatsapp_url_from_phone(phone: str, *, default_cc: str = "60") -> str | None:
+    """
+    Build https://wa.me/<digits> from a phone number.
+
+    Malaysian locals like 012-3456789 become 60123456789.
+    """
+    text = str(phone or "").strip()
+    if not text or text.upper() in {"N/A", "NA", "-", "—"}:
+        return None
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if not digits:
+        return None
+    if digits.startswith("0") and len(digits) >= 9:
+        digits = default_cc + digits[1:]
+    elif len(digits) <= 10 and not digits.startswith(default_cc):
+        # Likely local mobile without leading 0
+        digits = default_cc + digits
+    if len(digits) < 10:
+        return None
+    return f"https://wa.me/{digits}"
+
+
+def apply_whatsapp_telefon_links(df: pd.DataFrame) -> pd.DataFrame:
+    """Replace No Telefon values with wa.me URLs where possible (for LinkColumn)."""
+    if df is None or df.empty or "No Telefon" not in df.columns:
+        return df
+    out = df.copy()
+
+    def _cell(value) -> str:
+        text = str(value or "").strip()
+        if not text or text.upper() in {"N/A", "NA", "-", "—", "OVERALL TOTAL"}:
+            return ""
+        if text.lower().startswith("https://wa.me/"):
+            return text
+        url = whatsapp_url_from_phone(text)
+        return url or ""
+
+    out["No Telefon"] = out["No Telefon"].map(_cell)
+    return out
+
+
 def all_staff_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
     """
     Per-staff OT hours + payment across the (already filtered) frame.
