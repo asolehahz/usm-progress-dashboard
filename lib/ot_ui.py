@@ -144,11 +144,17 @@ def render_ot_role_tab(
         st.warning("No OT rows for this staff.")
         return
 
-    telefon = first_nonempty_value(staff_df.get("No Telefon", pd.Series(dtype=str)))
-    ic = first_nonempty_value(staff_df.get("No IC", pd.Series(dtype=str)))
-    c1, c2 = st.columns(2)
-    c1.metric("No Telefon", telefon or "—")
-    c2.metric("No IC", ic or "—")
+    telefon = first_nonempty_value(staff_df.get("No Telefon", pd.Series(dtype=str))) or "—"
+    ic = first_nonempty_value(staff_df.get("No IC", pd.Series(dtype=str))) or "—"
+    st.markdown(
+        f"<div style='font-size:0.85rem; line-height:1.35; margin:-0.35rem 0 0.75rem 0; "
+        f"opacity:0.85;'>"
+        f"<div><strong>{staff}</strong></div>"
+        f"<div>No Telefon: {telefon}</div>"
+        f"<div>No IC: {ic}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
     staff_last = latest_ot_date(staff_df) or last_date
     _show_payment_totals(
