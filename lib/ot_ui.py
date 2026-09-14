@@ -72,6 +72,9 @@ def _show_payment_totals(
     first_date: date | None,
     last_date: date | None,
     title: str,
+    *,
+    telefon: str | None = None,
+    ic: str | None = None,
 ):
     """Summary metrics: overall total + each payment (1st, 2nd, …), then table."""
     tagged = attach_payment_periods(df, first_date)
@@ -84,6 +87,24 @@ def _show_payment_totals(
         only_present=True,
     )
     st.subheader(title)
+    if telefon is not None or ic is not None:
+        tel_text = telefon if telefon not in (None, "") else "—"
+        ic_text = ic if ic not in (None, "") else "—"
+        wa = whatsapp_url_from_phone(tel_text) if tel_text != "—" else None
+        if wa:
+            tel_html = (
+                f'<a href="{wa}" target="_blank" rel="noopener noreferrer">{tel_text}</a>'
+            )
+        else:
+            tel_html = tel_text
+        st.markdown(
+            f"<div style='font-size:0.85rem; line-height:1.35; margin:-0.55rem 0 0.85rem 0; "
+            f"opacity:0.85;'>"
+            f"<div>No Telefon: {tel_html}</div>"
+            f"<div>No IC: {ic_text}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
     if summary.empty:
         st.info("No payment totals to show.")
         return summary
@@ -171,22 +192,6 @@ def render_ot_role_tab(
 
     telefon = first_nonempty_value(staff_df.get("No Telefon", pd.Series(dtype=str))) or "—"
     ic = first_nonempty_value(staff_df.get("No IC", pd.Series(dtype=str))) or "—"
-    wa = whatsapp_url_from_phone(telefon)
-    if wa:
-        telefon_html = (
-            f'<a href="{wa}" target="_blank" rel="noopener noreferrer">{telefon}</a>'
-        )
-    else:
-        telefon_html = telefon
-    st.markdown(
-        f"<div style='font-size:0.85rem; line-height:1.35; margin:-0.35rem 0 0.75rem 0; "
-        f"opacity:0.85;'>"
-        f"<div><strong>{staff}</strong></div>"
-        f"<div>No Telefon: {telefon_html}</div>"
-        f"<div>No IC: {ic}</div>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
 
     staff_last = latest_ot_date(staff_df) or last_date
     _show_payment_totals(
@@ -194,7 +199,9 @@ def render_ot_role_tab(
         role,
         first_date,
         staff_last,
-        f"{staff} — all payments",
+        staff,
+        telefon=telefon,
+        ic=ic,
     )
 
     st.subheader("OT details")
