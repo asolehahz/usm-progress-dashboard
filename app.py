@@ -21,7 +21,7 @@ from app_config import (
     dashboard_select_options,
     parse_dashboard_selection,
 )
-from lib.auth import admin_login_form
+from lib.auth import admin_login_form, ot_staff_login_form
 from lib.data_parser import (
     available_dates,
     campus_date_snapshot,
@@ -1016,6 +1016,8 @@ def page_issues():
 
 
 def page_ot_staff():
+    if not ot_staff_login_form():
+        st.stop()
     render_ot_staff()
 
 

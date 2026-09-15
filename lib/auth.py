@@ -31,6 +31,54 @@ def admin_login_form() -> bool:
     return False
 
 
+# --- OT Staff page gate (app.py Overview → OT Staff) -----------------------
+
+_OT_STAFF_KEY = "ot_staff_unlocked"
+
+
+def is_ot_staff_unlocked() -> bool:
+    return bool(st.session_state.get(_OT_STAFF_KEY, False))
+
+
+def ot_staff_login_form() -> bool:
+    """
+    Password gate for the OT Staff page in the main progress app.
+
+    Uses secret `ot_staff_password` (separate from admin_password).
+    Returns True when authenticated.
+    """
+    if is_ot_staff_unlocked():
+        st.success("OT Staff unlocked")
+        if st.button("Lock OT Staff", key="ot_staff_logout"):
+            st.session_state[_OT_STAFF_KEY] = False
+            st.rerun()
+        return True
+
+    expected = ""
+    try:
+        expected = str(st.secrets.get("ot_staff_password", "") or "")
+    except Exception:
+        expected = ""
+
+    if not expected:
+        st.error(
+            "OT Staff password is not configured. "
+            "Add `ot_staff_password` in Streamlit secrets."
+        )
+        return False
+
+    st.subheader("OT Staff — sign in")
+    with st.form("ot_staff_login"):
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Unlock")
+        if submitted:
+            if password == expected:
+                st.session_state[_OT_STAFF_KEY] = True
+                st.rerun()
+            st.error("Incorrect password")
+    return False
+
+
 # --- OT PIC unit gate (ot_pic_app.py only) ---------------------------------
 
 _PIC_UNIT_KEY = "ot_pic_unit"
