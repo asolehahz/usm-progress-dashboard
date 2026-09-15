@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import streamlit as st
 
-from lib.ot_ui import render_ot_ptd_only
+from lib.ot_ui import render_ot_role_tab, render_overall_pay_role
+from lib.ot_staff import earliest_ot_date, latest_ot_date
 from lib.sheets_client import fetch_csv, fetch_ot_ptd
 
 st.set_page_config(
@@ -52,6 +53,21 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
+def render_ot_ptd_only():
+    """PTD-only OT website (no PIC)."""
+    st.header("OT Staff PTD")
+    df_ptd = fetch_ot_ptd()
+    first_date = earliest_ot_date(df_ptd)
+    last_date = latest_ot_date(df_ptd)
+    tab_ptd, tab_overall = st.tabs(["OT PTD", "Overall Bayaran"])
+    with tab_ptd:
+        render_ot_role_tab(df_ptd, "PTD", "ot_ptd_share", first_date, last_date)
+    with tab_overall:
+        render_overall_pay_role(
+            df_ptd, "PTD", "ot_ptd_share_overall", first_date, last_date
+        )
 
 
 def main():
