@@ -1,25 +1,22 @@
 """
-USM OT Staff — standalone Streamlit website.
-
-Same OT Staff experience as the main progress dashboard
-(OT PTD / OT PIC / Overall Bayaran), without campus progress pages.
+USM OT Staff PTD — standalone Streamlit website (PTD only, no PIC).
 
 Run locally:
     streamlit run ot_app.py
 
 Streamlit Cloud: New app → same repo → Main file path = ot_app.py
-(Keep the progress dashboard on app.py; do not replace it.)
+(PIC-only share app uses ot_pic_app.py instead.)
 """
 
 from __future__ import annotations
 
 import streamlit as st
 
-from lib.ot_ui import render_ot_staff
-from lib.sheets_client import fetch_csv, fetch_ot_pic, fetch_ot_ptd
+from lib.ot_ui import render_ot_ptd_only
+from lib.sheets_client import fetch_csv, fetch_ot_ptd
 
 st.set_page_config(
-    page_title="USM OT Staff",
+    page_title="USM OT Staff PTD",
     page_icon="⏱️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -61,8 +58,8 @@ def main():
     st.sidebar.markdown(
         """
         <div class="sidebar-brand">
-            <h2>USM OT Staff</h2>
-            <p>PTD · PIC · Overall Bayaran</p>
+            <h2>USM OT Staff PTD</h2>
+            <p>PTD overtime only</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -70,12 +67,9 @@ def main():
     if st.sidebar.button("Refresh data"):
         fetch_csv.clear()
         fetch_ot_ptd.clear()
-        fetch_ot_pic.clear()
         st.rerun()
 
-    # Same UI as Overview → OT Staff on the main progress app
-    # (staff heading + No Telefon / No IC underneath).
-    render_ot_staff()
+    render_ot_ptd_only()
 
 
 if __name__ == "__main__":

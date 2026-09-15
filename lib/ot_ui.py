@@ -336,6 +336,21 @@ def render_ot_staff():
         render_overall_bayaran(df_ptd, df_pic, first_date, last_date)
 
 
+def render_ot_ptd_only():
+    """PTD-only OT website (no PIC) — for ot_app.py."""
+    st.header("OT Staff PTD")
+    df_ptd = fetch_ot_ptd()
+    first_date = earliest_ot_date(df_ptd)
+    last_date = latest_ot_date(df_ptd)
+    tab_ptd, tab_overall = st.tabs(["OT PTD", "Overall Bayaran"])
+    with tab_ptd:
+        render_ot_role_tab(df_ptd, "PTD", "ot_ptd_share", first_date, last_date)
+    with tab_overall:
+        render_overall_pay_role(
+            df_ptd, "PTD", "ot_ptd_share_overall", first_date, last_date
+        )
+
+
 def render_ot_pic_only():
     """PIC-only OT website (no PTD) — password-gated by Jabatan/Unit."""
     from lib.auth import pic_auth_unit, pic_unit_login_form
