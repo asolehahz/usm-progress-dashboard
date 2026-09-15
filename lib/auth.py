@@ -63,9 +63,12 @@ def _pic_unit_password_map() -> dict[str, str]:
 
 
 def _pic_all_password() -> str:
-    """Optional master password that can view all PIC units."""
+    """Master password to view all PIC units (ot_pic_all_password or admin_password)."""
     try:
-        return str(st.secrets.get("ot_pic_all_password", "") or "")
+        pw = str(st.secrets.get("ot_pic_all_password", "") or "")
+        if pw:
+            return pw
+        return str(st.secrets.get("admin_password", "") or "")
     except Exception:
         return ""
 
@@ -126,9 +129,7 @@ def pic_unit_login_form(unit_options: list[str]) -> bool:
     with st.form("ot_pic_unit_login"):
         mode = st.radio(
             "Access",
-            options=["My Jabatan/Unit", "All units (admin)"]
-            if all_pw
-            else ["My Jabatan/Unit"],
+            options=["My Jabatan/Unit", "All Jabatan/Unit"],
             horizontal=True,
             key="ot_pic_login_mode",
         )
@@ -144,16 +145,27 @@ def pic_unit_login_form(unit_options: list[str]) -> bool:
                 options=configured_units or ["—"],
                 key="ot_pic_login_unit",
             )
+        elif not all_pw:
+            st.caption(
+                "All Jabatan/Unit needs `ot_pic_all_password` or `admin_password` "
+                "in Streamlit secrets."
+            )
         password = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Log in")
 
         if submitted:
-            if mode.startswith("All") and all_pw:
-                if password == all_pw:
+            if mode.startswith("All"):
+                if not all_pw:
+                    st.error(
+                        "All-access password is not configured. "
+                        "Add ot_pic_all_password or admin_password in secrets."
+                    )
+                elif password == all_pw:
                     st.session_state[_PIC_SCOPE_KEY] = "all"
                     st.session_state.pop(_PIC_UNIT_KEY, None)
                     st.rerun()
-                st.error("Incorrect password")
+                else:
+                    st.error("Incorrect password")
             else:
                 if not selected_unit or selected_unit == "—":
                     st.error("Select a Jabatan/Unit")
