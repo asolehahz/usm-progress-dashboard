@@ -131,14 +131,17 @@ def pic_unit_login_form(unit_options: list[str]) -> bool:
         if _normalize_unit_key(unit) in passwords:
             configured_units.append(unit)
 
-    login_options: list[str] = []
-    if all_pw:
-        login_options.append(_PIC_ALL_LABEL)
-    login_options.extend(configured_units)
-    if not login_options:
+    # Always show All first; admin password checked on submit.
+    login_options: list[str] = [_PIC_ALL_LABEL, *configured_units]
+    if not configured_units:
         st.warning(
             "No Jabatan/Unit passwords match the sheet. "
             "Check secret keys against Jabatan/Unit names."
+        )
+    if not all_pw:
+        st.caption(
+            "To use **All Jabatan/Unit**, add `ot_pic_all_password` or "
+            "`admin_password` in this app's Streamlit secrets."
         )
 
     st.subheader("Sign in")
