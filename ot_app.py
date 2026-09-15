@@ -73,7 +73,8 @@ def main():
         fetch_ot_pic.clear()
         st.rerun()
 
-    # Same UI as Overview → OT Staff on the main progress app.
+    # Same UI as Overview → OT Staff on the main progress app
+    # (staff heading + No Telefon / No IC underneath).
     render_ot_staff()
 
 

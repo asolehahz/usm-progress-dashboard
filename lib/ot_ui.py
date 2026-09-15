@@ -24,6 +24,7 @@ from lib.ot_staff import (
     payment_period_options,
     payment_period_ot_summary,
     staff_names,
+    staff_summary_for_display,
     whatsapp_url_from_phone,
 )
 from lib.sheets_client import fetch_ot_pic, fetch_ot_ptd
@@ -36,14 +37,28 @@ def _telefon_column_config() -> dict:
             help="Open WhatsApp chat",
             display_text="https://wa\\.me/(\\d+)",
             max_chars=20,
-        )
+        ),
+        "WhatsApp": st.column_config.LinkColumn(
+            "WhatsApp",
+            help="Open WhatsApp chat",
+            display_text="Chat",
+            max_chars=10,
+        ),
+        "Nama Staf": st.column_config.TextColumn(
+            "Nama Staf",
+            width="medium",
+        ),
     }
 
 
 def _show_ot_dataframe(df: pd.DataFrame):
-    """Show OT table with clickable WhatsApp links on No Telefon."""
+    """Show OT table with clickable WhatsApp links when present."""
     view = apply_whatsapp_telefon_links(df)
-    config = _telefon_column_config() if "No Telefon" in view.columns else None
+    config = {
+        key: value
+        for key, value in _telefon_column_config().items()
+        if key in view.columns
+    } or None
     st.dataframe(
         view,
         width="stretch",
@@ -267,7 +282,7 @@ def render_overall_pay_role(
         "Overall total (RM)",
         f"{float(data_rows['Total Pay (RM)'].sum()) if not data_rows.empty else 0:,.2f}",
     )
-    _show_ot_dataframe(staff_summary)
+    _show_ot_dataframe(staff_summary_for_display(staff_summary))
 
 
 def render_overall_bayaran(

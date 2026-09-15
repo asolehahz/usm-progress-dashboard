@@ -765,8 +765,6 @@ def detail_table_for_display(df: pd.DataFrame) -> pd.DataFrame:
         "No",
         "Tarikh",
         "Payment",
-        "No Telefon",
-        "No IC",
         "Jenis Hari",
         "Masa mula",
         "Masa Tamat",
@@ -782,3 +780,40 @@ def detail_table_for_display(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     keep = [c for c in cols if c in out.columns]
     return out[keep]
+
+
+def staff_summary_for_display(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Nest No Telefon / No IC under Nama Staf (same layout as the staff heading),
+    and expose a WhatsApp link column for clickable chat.
+    """
+    if df is None or df.empty:
+        return df
+
+    out = df.copy()
+    staff_cells: list[str] = []
+    wa_cells: list[str] = []
+    for _, row in out.iterrows():
+        name = str(row.get("Nama Staf", "") or "").strip()
+        if name.lower() == "overall total":
+            staff_cells.append(name)
+            wa_cells.append("")
+            continue
+        tel = str(row.get("No Telefon", "") or "").strip() or "—"
+        ic = str(row.get("No IC", "") or "").strip() or "—"
+        staff_cells.append(f"{name}\nNo Telefon: {tel}\nNo IC: {ic}")
+        wa_cells.append(whatsapp_url_from_phone(tel) or "")
+
+    out["Nama Staf"] = staff_cells
+    out["WhatsApp"] = wa_cells
+    drop_cols = [c for c in ("No Telefon", "No IC") if c in out.columns]
+    if drop_cols:
+        out = out.drop(columns=drop_cols)
+
+    cols = list(out.columns)
+    if "WhatsApp" in cols and "Nama Staf" in cols:
+        cols.remove("WhatsApp")
+        insert_at = cols.index("Nama Staf") + 1
+        cols.insert(insert_at, "WhatsApp")
+        out = out[cols]
+    return out
