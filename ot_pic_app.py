@@ -1,7 +1,8 @@
 """
 USM OT Staff PIC — standalone Streamlit website (PIC only, no PTD).
 
-Share this app URL with PIC staff.
+Password-gated by Jabatan/Unit: each unit only sees its own staff.
+Configure passwords in Streamlit secrets ([ot_pic_unit_passwords]).
 
 Run locally:
     streamlit run ot_pic_app.py

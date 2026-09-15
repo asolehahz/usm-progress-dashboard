@@ -172,20 +172,28 @@ def render_ot_role_tab(
     key_prefix: str,
     first_date: date | None,
     last_date: date | None,
+    *,
+    locked_jabatan: str | None = None,
 ):
     """One OT role tab: jabatan → staff → payment periods + TOTAL + details."""
     if df is None or df.empty:
         st.info(f"No staff rows found in OT STAFF {role} sheet.")
         return
 
-    units = jabatan_units(df)
-    jabatan_options = ["All"] + units
-    selected_jabatan = st.selectbox(
-        "Select Jabatan/Unit",
-        options=jabatan_options,
-        key=f"{key_prefix}_jabatan",
-    )
-    unit_df = filter_jabatan(df, selected_jabatan)
+    if locked_jabatan:
+        selected_jabatan = locked_jabatan
+        st.caption(f"Jabatan/Unit: **{selected_jabatan}**")
+        unit_df = filter_jabatan(df, selected_jabatan)
+    else:
+        units = jabatan_units(df)
+        jabatan_options = ["All"] + units
+        selected_jabatan = st.selectbox(
+            "Select Jabatan/Unit",
+            options=jabatan_options,
+            key=f"{key_prefix}_jabatan",
+        )
+        unit_df = filter_jabatan(df, selected_jabatan)
+
     names = staff_names(unit_df)
     if not names:
         st.info(
@@ -230,20 +238,28 @@ def render_overall_pay_role(
     key_prefix: str,
     first_date: date | None,
     last_date: date | None,
+    *,
+    locked_jabatan: str | None = None,
 ):
     """Overall bayaran for all staff in one role (PTD or PIC)."""
     if df is None or df.empty:
         st.info(f"No staff rows found in OT STAFF {role} sheet.")
         return
 
-    units = jabatan_units(df)
-    jabatan_options = ["All"] + units
-    selected_jabatan = st.selectbox(
-        "Select Jabatan/Unit",
-        options=jabatan_options,
-        key=f"{key_prefix}_jabatan",
-    )
-    unit_df = filter_jabatan(df, selected_jabatan)
+    if locked_jabatan:
+        selected_jabatan = locked_jabatan
+        st.caption(f"Jabatan/Unit: **{selected_jabatan}**")
+        unit_df = filter_jabatan(df, selected_jabatan)
+    else:
+        units = jabatan_units(df)
+        jabatan_options = ["All"] + units
+        selected_jabatan = st.selectbox(
+            "Select Jabatan/Unit",
+            options=jabatan_options,
+            key=f"{key_prefix}_jabatan",
+        )
+        unit_df = filter_jabatan(df, selected_jabatan)
+
     unit_last = latest_ot_date(unit_df) or last_date
     jabatan_label = (
         selected_jabatan if selected_jabatan != "All" else "all units"
@@ -321,15 +337,38 @@ def render_ot_staff():
 
 
 def render_ot_pic_only():
-    """PIC-only OT website (no PTD) — for sharing with PIC staff."""
+    """PIC-only OT website (no PTD) — password-gated by Jabatan/Unit."""
+    from lib.auth import pic_auth_unit, pic_unit_login_form
+
     st.header("OT Staff PIC")
     df_pic = fetch_ot_pic()
+    units = jabatan_units(df_pic)
+
+    if not pic_unit_login_form(units):
+        st.stop()
+
+    locked = pic_auth_unit()  # None = all-units admin
+    if locked:
+        df_pic = filter_jabatan(df_pic, locked)
+
     first_date = earliest_ot_date(df_pic)
     last_date = latest_ot_date(df_pic)
     tab_pic, tab_overall = st.tabs(["OT PIC", "Overall Bayaran"])
     with tab_pic:
-        render_ot_role_tab(df_pic, "PIC", "ot_pic_share", first_date, last_date)
+        render_ot_role_tab(
+            df_pic,
+            "PIC",
+            "ot_pic_share",
+            first_date,
+            last_date,
+            locked_jabatan=locked,
+        )
     with tab_overall:
         render_overall_pay_role(
-            df_pic, "PIC", "ot_pic_share_overall", first_date, last_date
+            df_pic,
+            "PIC",
+            "ot_pic_share_overall",
+            first_date,
+            last_date,
+            locked_jabatan=locked,
         )
