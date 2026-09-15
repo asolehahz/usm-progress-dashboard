@@ -318,3 +318,18 @@ def render_ot_staff():
         render_ot_role_tab(df_pic, "PIC", "ot_pic", first_date, last_date)
     with tab_overall:
         render_overall_bayaran(df_ptd, df_pic, first_date, last_date)
+
+
+def render_ot_pic_only():
+    """PIC-only OT website (no PTD) — for sharing with PIC staff."""
+    st.header("OT Staff PIC")
+    df_pic = fetch_ot_pic()
+    first_date = earliest_ot_date(df_pic)
+    last_date = latest_ot_date(df_pic)
+    tab_pic, tab_overall = st.tabs(["OT PIC", "Overall Bayaran"])
+    with tab_pic:
+        render_ot_role_tab(df_pic, "PIC", "ot_pic_share", first_date, last_date)
+    with tab_overall:
+        render_overall_pay_role(
+            df_pic, "PIC", "ot_pic_share_overall", first_date, last_date
+        )
