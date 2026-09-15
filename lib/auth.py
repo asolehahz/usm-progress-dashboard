@@ -88,6 +88,11 @@ def pic_is_authenticated() -> bool:
     return bool(st.session_state.get(_PIC_UNIT_KEY))
 
 
+def pic_is_admin_all() -> bool:
+    """True when logged in with All Jabatan/Unit admin password."""
+    return st.session_state.get(_PIC_SCOPE_KEY) == "all"
+
+
 def pic_logout():
     st.session_state.pop(_PIC_UNIT_KEY, None)
     st.session_state.pop(_PIC_SCOPE_KEY, None)
