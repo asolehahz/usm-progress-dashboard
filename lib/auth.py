@@ -35,6 +35,7 @@ def admin_login_form() -> bool:
 
 _PIC_UNIT_KEY = "ot_pic_unit"
 _PIC_SCOPE_KEY = "ot_pic_scope"  # "unit" | "all"
+_PIC_ALL_LABEL = "All Jabatan/Unit"
 
 
 def _normalize_unit_key(name: str) -> str:
@@ -130,36 +131,30 @@ def pic_unit_login_form(unit_options: list[str]) -> bool:
         if _normalize_unit_key(unit) in passwords:
             configured_units.append(unit)
 
+    login_options: list[str] = []
+    if all_pw:
+        login_options.append(_PIC_ALL_LABEL)
+    login_options.extend(configured_units)
+    if not login_options:
+        st.warning(
+            "No Jabatan/Unit passwords match the sheet. "
+            "Check secret keys against Jabatan/Unit names."
+        )
+
     st.subheader("Sign in")
     with st.form("ot_pic_unit_login"):
-        mode = st.radio(
-            "Access",
-            options=["My Jabatan/Unit", "All Jabatan/Unit"],
-            horizontal=True,
-            key="ot_pic_login_mode",
+        selected = st.selectbox(
+            "Jabatan/Unit",
+            options=login_options or ["—"],
+            key="ot_pic_login_unit",
         )
-        selected_unit = None
-        if mode == "My Jabatan/Unit":
-            if not configured_units:
-                st.warning(
-                    "No Jabatan/Unit passwords match the sheet. "
-                    "Check secret keys against Jabatan/Unit names."
-                )
-            selected_unit = st.selectbox(
-                "Jabatan/Unit",
-                options=configured_units or ["—"],
-                key="ot_pic_login_unit",
-            )
-        elif not all_pw:
-            st.caption(
-                "All Jabatan/Unit needs `ot_pic_all_password` or `admin_password` "
-                "in Streamlit secrets."
-            )
         password = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Log in")
 
         if submitted:
-            if mode.startswith("All"):
+            if not selected or selected == "—":
+                st.error("Select a Jabatan/Unit")
+            elif selected == _PIC_ALL_LABEL:
                 if not all_pw:
                     st.error(
                         "All-access password is not configured. "
@@ -172,13 +167,11 @@ def pic_unit_login_form(unit_options: list[str]) -> bool:
                 else:
                     st.error("Incorrect password")
             else:
-                if not selected_unit or selected_unit == "—":
-                    st.error("Select a Jabatan/Unit")
+                expected = passwords.get(_normalize_unit_key(selected), "")
+                if expected and password == expected:
+                    st.session_state[_PIC_SCOPE_KEY] = "unit"
+                    st.session_state[_PIC_UNIT_KEY] = selected
+                    st.rerun()
                 else:
-                    expected = passwords.get(_normalize_unit_key(selected_unit), "")
-                    if expected and password == expected:
-                        st.session_state[_PIC_SCOPE_KEY] = "unit"
-                        st.session_state[_PIC_UNIT_KEY] = selected_unit
-                        st.rerun()
                     st.error("Incorrect password")
     return False
