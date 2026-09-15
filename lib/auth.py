@@ -63,12 +63,9 @@ def _pic_unit_password_map() -> dict[str, str]:
 
 
 def _pic_all_password() -> str:
-    """Master password to view all PIC units (ot_pic_all_password or admin_password)."""
+    """Optional master password that can view all PIC units."""
     try:
-        pw = str(st.secrets.get("ot_pic_all_password", "") or "")
-        if pw:
-            return pw
-        return str(st.secrets.get("admin_password", "") or "")
+        return str(st.secrets.get("ot_pic_all_password", "") or "")
     except Exception:
         return ""
 
@@ -86,11 +83,6 @@ def pic_is_authenticated() -> bool:
     if scope == "all":
         return True
     return bool(st.session_state.get(_PIC_UNIT_KEY))
-
-
-def pic_is_admin_all() -> bool:
-    """True when logged in with All Jabatan/Unit admin password."""
-    return st.session_state.get(_PIC_SCOPE_KEY) == "all"
 
 
 def pic_logout():
@@ -130,52 +122,46 @@ def pic_unit_login_form(unit_options: list[str]) -> bool:
         if _normalize_unit_key(unit) in passwords:
             configured_units.append(unit)
 
-    all_option = "All Jabatan/Unit"
-    dropdown_options = [all_option] + configured_units
-    if not configured_units and not all_pw:
-        dropdown_options = ["—"]
-
     st.subheader("Sign in")
     with st.form("ot_pic_unit_login"):
-        if not configured_units and all_pw:
-            st.caption(
-                "No unit passwords matched the sheet — use **All Jabatan/Unit** "
-                "with the admin password."
-            )
-        elif not configured_units:
-            st.warning(
-                "No Jabatan/Unit passwords match the sheet. "
-                "Check secret keys against Jabatan/Unit names."
-            )
-        selected = st.selectbox(
-            "Jabatan/Unit",
-            options=dropdown_options,
-            key="ot_pic_login_unit",
+        mode = st.radio(
+            "Access",
+            options=["My Jabatan/Unit", "All units (admin)"]
+            if all_pw
+            else ["My Jabatan/Unit"],
+            horizontal=True,
+            key="ot_pic_login_mode",
         )
+        selected_unit = None
+        if mode == "My Jabatan/Unit":
+            if not configured_units:
+                st.warning(
+                    "No Jabatan/Unit passwords match the sheet. "
+                    "Check secret keys against Jabatan/Unit names."
+                )
+            selected_unit = st.selectbox(
+                "Jabatan/Unit",
+                options=configured_units or ["—"],
+                key="ot_pic_login_unit",
+            )
         password = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Log in")
 
         if submitted:
-            if selected == all_option:
-                if not all_pw:
-                    st.error(
-                        "All-access password is not configured. "
-                        "Add ot_pic_all_password or admin_password in secrets."
-                    )
-                elif password == all_pw:
+            if mode.startswith("All") and all_pw:
+                if password == all_pw:
                     st.session_state[_PIC_SCOPE_KEY] = "all"
                     st.session_state.pop(_PIC_UNIT_KEY, None)
                     st.rerun()
-                else:
-                    st.error("Incorrect password")
-            elif not selected or selected == "—":
-                st.error("Select a Jabatan/Unit")
+                st.error("Incorrect password")
             else:
-                expected = passwords.get(_normalize_unit_key(selected), "")
-                if expected and password == expected:
-                    st.session_state[_PIC_SCOPE_KEY] = "unit"
-                    st.session_state[_PIC_UNIT_KEY] = selected
-                    st.rerun()
+                if not selected_unit or selected_unit == "—":
+                    st.error("Select a Jabatan/Unit")
                 else:
+                    expected = passwords.get(_normalize_unit_key(selected_unit), "")
+                    if expected and password == expected:
+                        st.session_state[_PIC_SCOPE_KEY] = "unit"
+                        st.session_state[_PIC_UNIT_KEY] = selected_unit
+                        st.rerun()
                     st.error("Incorrect password")
     return False
