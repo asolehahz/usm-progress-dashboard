@@ -13,12 +13,14 @@ from app_config import (
     CAMPUS_ICONS,
     COUNTABLE_ACTIVITIES,
     DONE_TOTAL_PCT_ACTIVITIES,
+    EQUIPMENT_HEADER_ALIASES,
     FRACTION_METRIC_ACTIVITIES,
     INDUK_LOCATION_GROUPS,
     LOCATION_MEAN_PCT_ACTIVITIES,
     PCT_DERIVED_DONE_ACTIVITIES,
     PCT_DERIVED_DONE_EXACT,
     PCT_DERIVED_DONE_ROUND10,
+    SUMMARY_ONLY_EQUIPMENT,
     TABLE_COLUMNS,
     TRUSTED_DONE_TOTAL_ACTIVITIES,
     campus_sheet_names,
@@ -109,13 +111,85 @@ def _looks_like_date(value) -> bool:
     return bool(re.match(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$", text))
 
 
-def _equipment_cols(act_cols: list[int], n_cols: int) -> list[int]:
-    """Controller / Access Switch / Dist. Switch sit right after Fiber Optic."""
+def _canonicalize_equipment_name(raw) -> str | None:
+    text = str(raw or "").strip().lower().replace("\r", "")
+    if not text:
+        return None
+    aliased = EQUIPMENT_HEADER_ALIASES.get(text)
+    if aliased:
+        return aliased
+    for name in ACTIVE_EQUIPMENT:
+        if name.lower() == text:
+            return name
+    return None
+
+
+def _equipment_col_map(
+    act_cols: list[int],
+    n_cols: int,
+    *,
+    header_row: pd.Series | None = None,
+    subheader_row: pd.Series | None = None,
+) -> dict[str, int]:
+    """
+    Map canonical equipment names → column index after Fiber Optic.
+
+    Prefers subheader labels (Controller / MultiGE switch / Dist. Switch)
+    and header label RFS. Older sheets used Access Switch (aliased to MultiGE).
+    """
     if not act_cols:
-        return []
+        return {}
     start = act_cols[-1] + 1
-    cols = [c for c in range(start, start + len(ACTIVE_EQUIPMENT)) if c < n_cols]
-    return cols if len(cols) == len(ACTIVE_EQUIPMENT) else []
+    mapping: dict[str, int] = {}
+    for offset in range(0, 5):
+        col = start + offset
+        if col >= n_cols:
+            break
+        name = None
+        if subheader_row is not None and col < len(subheader_row):
+            name = _canonicalize_equipment_name(subheader_row.iloc[col])
+        if not name and header_row is not None and col < len(header_row):
+            name = _canonicalize_equipment_name(header_row.iloc[col])
+        if name and name not in mapping:
+            mapping[name] = col
+
+    # Positional fallback for unlabeled older blocks (3 equipment cols only).
+    if not mapping:
+        for offset, name in enumerate(
+            ["Controller", "MultiGE Switch", "Dist. Switch"]
+        ):
+            col = start + offset
+            if col < n_cols:
+                mapping[name] = col
+    return mapping
+
+
+def _equipment_cols(
+    act_cols: list[int],
+    n_cols: int,
+    *,
+    header_row: pd.Series | None = None,
+    subheader_row: pd.Series | None = None,
+) -> list[int]:
+    """
+    Column indices aligned to ACTIVE_EQUIPMENT order.
+    Missing equipment uses -1 (skip when reading).
+    """
+    col_map = _equipment_col_map(
+        act_cols,
+        n_cols,
+        header_row=header_row,
+        subheader_row=subheader_row,
+    )
+    return [col_map.get(name, -1) for name in ACTIVE_EQUIPMENT]
+
+
+def _header_subheader(
+    df: pd.DataFrame, header_idx: int
+) -> tuple[pd.Series, pd.Series | None]:
+    header = df.iloc[header_idx]
+    sub = df.iloc[header_idx + 1] if header_idx + 1 < len(df) else None
+    return header, sub
 
 def _detect_header_row_index(df: pd.DataFrame) -> int:
     """Find the header row that contains at least one Trunking column."""
@@ -345,14 +419,21 @@ def _iter_location_blocks(
 
 
 def _activity_values_from_row(
-    row: pd.Series, act_cols: list[int], include_equipment: bool = False
+    row: pd.Series,
+    act_cols: list[int],
+    include_equipment: bool = False,
+    eq_cols: list[int] | None = None,
 ) -> dict[str, float | None]:
     values: dict[str, float | None] = {}
     for act_name, col_idx in zip(ACTIVITIES, act_cols):
         values[act_name] = _parse_number(row.iloc[col_idx]) if col_idx < len(row) else None
     if include_equipment:
-        for eq_name, col_idx in zip(ACTIVE_EQUIPMENT, _equipment_cols(act_cols, len(row))):
-            raw = row.iloc[col_idx] if col_idx < len(row) else None
+        cols = eq_cols if eq_cols is not None else _equipment_cols(act_cols, len(row))
+        for eq_name, col_idx in zip(ACTIVE_EQUIPMENT, cols):
+            if col_idx is None or col_idx < 0 or col_idx >= len(row):
+                values[eq_name] = None
+                continue
+            raw = row.iloc[col_idx]
             text = "" if raw is None else str(raw).strip().upper()
             if text in {"", "N/A", "NA", "-"}:
                 values[eq_name] = None
@@ -380,36 +461,44 @@ def _location_block_values(
     percent_row: int,
     act_cols: list[int],
     include_equipment: bool = False,
+    eq_cols: list[int] | None = None,
 ) -> tuple[dict[str, float | None], dict[str, float | None], dict[str, float | None]]:
     """
     Read DONE / TOTAL / PERCENTAGE for one location block.
 
-    Trusted from sheet: UTP Point, AP Mounting (DONE + TOTAL);
-      PERCENTAGE recalculated as DONE / TOTAL × 100.
+    Trusted from sheet DONE+TOTAL (recalc %): UTP, AP, Slab Coring, Rack,
+      MultiGE Switch.
     Trunking / Lay Cable / Termination: DONE not collected → None (show N/A).
-      TOTAL and % stay from the sheet; dashboard uses location-mean %.
-    Fiber Optic / Slab Coring / Rack Installation: DONE = % × TOTAL
-    (no round-to-10). Locations that were previously N/A are included
-    as soon as they have % and TOTAL.
+    Fiber Optic: DONE = % × TOTAL (no round-to-10).
+    Controller / RFS: read location cells when present; campus averages use
+      sheet TOTAL DONE / OVERALL TOTAL only.
     """
+    if eq_cols is None and include_equipment:
+        eq_cols = _equipment_cols(act_cols, len(df.columns))
+
     done_vals = _activity_values_from_row(
-        df.iloc[done_row], act_cols, include_equipment=include_equipment
+        df.iloc[done_row],
+        act_cols,
+        include_equipment=include_equipment,
+        eq_cols=eq_cols,
     )
     total_vals = _activity_values_from_row(
-        df.iloc[total_row], act_cols, include_equipment=include_equipment
+        df.iloc[total_row],
+        act_cols,
+        include_equipment=include_equipment,
+        eq_cols=eq_cols,
     )
     pct_vals: dict[str, float | None] = {}
     for act_name, col_idx in zip(ACTIVITIES, act_cols):
         pct_vals[act_name] = (
             _parse_percent(df.iloc[percent_row, col_idx]) if col_idx < len(df.columns) else None
         )
-    if include_equipment:
-        for eq_name, col_idx in zip(ACTIVE_EQUIPMENT, _equipment_cols(act_cols, len(df.columns))):
-            pct_vals[eq_name] = (
-                _parse_percent(df.iloc[percent_row, col_idx])
-                if col_idx < len(df.columns)
-                else None
-            )
+    if include_equipment and eq_cols is not None:
+        for eq_name, col_idx in zip(ACTIVE_EQUIPMENT, eq_cols):
+            if col_idx is None or col_idx < 0 or col_idx >= len(df.columns):
+                pct_vals[eq_name] = None
+            else:
+                pct_vals[eq_name] = _parse_percent(df.iloc[percent_row, col_idx])
 
     # Only % + TOTAL are collected for these — never invent a DONE count.
     for act_name in PCT_DERIVED_DONE_ROUND10:
@@ -422,14 +511,23 @@ def _location_block_values(
         if derived is not None:
             done_vals[act_name] = derived
 
-    # UTP / AP: % always from recorded DONE ÷ TOTAL (ignore sheet % if wrong).
+    # Trusted DONE÷TOTAL columns (activities + MultiGE Switch, etc.).
     for act_name in TRUSTED_DONE_TOTAL_ACTIVITIES:
         done = done_vals.get(act_name)
         total = total_vals.get(act_name)
         if done is not None and total is not None and float(total) != 0:
             pct_vals[act_name] = round(float(done) / float(total) * 100, 2)
-        else:
-            pct_vals[act_name] = None
+        elif act_name in done_vals or act_name in pct_vals:
+            # Keep sheet % only when both done/total missing for non-required keys
+            if done is None or total is None or float(total or 0) == 0:
+                if act_name in {
+                    "UTP Point",
+                    "AP Mounting",
+                    "Slab Coring (hole)",
+                    "Rack Installation (nos)",
+                    "MultiGE Switch",
+                }:
+                    pct_vals[act_name] = None
 
     return done_vals, total_vals, pct_vals
 
@@ -498,9 +596,12 @@ def _sum_location_done_total(
     df: pd.DataFrame,
     act_cols: list[int],
     activities: list[str] | None = None,
+    *,
+    eq_cols: list[int] | None = None,
 ) -> tuple[dict[str, float | None], dict[str, float | None]]:
-    """Sum DONE and TOTAL across all location rows (INDUK pre-group)."""
+    """Sum DONE and TOTAL across all location rows."""
     acts = activities or list(DONE_TOTAL_PCT_ACTIVITIES)
+    need_equipment = any(a in ACTIVE_EQUIPMENT for a in acts)
     sum_done: dict[str, float] = {a: 0.0 for a in acts}
     sum_total: dict[str, float] = {a: 0.0 for a in acts}
     has_done = {a: False for a in acts}
@@ -508,7 +609,13 @@ def _sum_location_done_total(
 
     for _loc, done_row, total_row, percent_row in location_blocks:
         done_vals, total_vals, _pct = _location_block_values(
-            df, done_row, total_row, percent_row, act_cols
+            df,
+            done_row,
+            total_row,
+            percent_row,
+            act_cols,
+            include_equipment=need_equipment,
+            eq_cols=eq_cols,
         )
         for act in acts:
             d = done_vals.get(act)
@@ -526,16 +633,66 @@ def _sum_location_done_total(
     )
 
 
+def _read_summary_only_equipment(
+    df: pd.DataFrame,
+    act_cols: list[int],
+    location_col: int,
+    progress_col: int,
+    eq_cols: list[int],
+) -> dict[str, tuple[float | None, float | None]]:
+    """
+    Controller / RFS: read TOTAL DONE and OVERALL TOTAL from the sheet only,
+    then callers recalculate average %.
+    """
+    done_row_idx = _find_summary_row(df, location_col, progress_col, {"TOTAL DONE"})
+    total_row_idx = _find_summary_row(df, location_col, progress_col, {"OVERALL TOTAL"})
+    out: dict[str, tuple[float | None, float | None]] = {}
+    for eq_name, col_idx in zip(ACTIVE_EQUIPMENT, eq_cols):
+        if eq_name not in SUMMARY_ONLY_EQUIPMENT:
+            continue
+        if col_idx is None or col_idx < 0:
+            out[eq_name] = (None, None)
+            continue
+        d = (
+            _parse_number(df.iloc[done_row_idx, col_idx])
+            if done_row_idx is not None and col_idx < len(df.columns)
+            else None
+        )
+        t = (
+            _parse_number(df.iloc[total_row_idx, col_idx])
+            if total_row_idx is not None and col_idx < len(df.columns)
+            else None
+        )
+        out[eq_name] = (d, t)
+    return out
+
+
+def _attach_fraction_fields(
+    record: dict,
+    name: str,
+    done: float | None,
+    total: float | None,
+) -> None:
+    record[f"{name}__done"] = None if done is None else int(round(float(done)))
+    record[f"{name}__total"] = None if total is None else int(round(float(total)))
+    if done is not None and total is not None and float(total) != 0:
+        record[name] = round(float(done) / float(total) * 100, 2)
+    else:
+        record[name] = None
+
+
 def _accumulate_group_values(
     location_blocks: list[tuple[str, int, int, int]],
     df: pd.DataFrame,
     act_cols: list[int],
+    *,
+    eq_cols: list[int] | None = None,
 ) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, float]]]:
     """
     Roll up DONE/TOTAL (+ equipment) per INDUK desa group.
 
     DONE for Trunking/Lay/Term/Fiber is derived per location before summing.
-    UTP/AP use sheet DONE/TOTAL as-is.
+    UTP/AP/Slab/Rack/MultiGE use sheet DONE/TOTAL as-is.
     """
     grouped_done: dict[str, dict[str, float]] = {}
     grouped_total: dict[str, dict[str, float]] = {}
@@ -545,10 +702,19 @@ def _accumulate_group_values(
         if not group:
             continue
         done_vals, total_vals, _pct_vals = _location_block_values(
-            df, done_row, total_row, percent_row, act_cols, include_equipment=True
+            df,
+            done_row,
+            total_row,
+            percent_row,
+            act_cols,
+            include_equipment=True,
+            eq_cols=eq_cols,
         )
 
         for col in TABLE_COLUMNS:
+            # Campus averages for Controller/RFS come from sheet summary rows.
+            if col in SUMMARY_ONLY_EQUIPMENT:
+                continue
             done_num = done_vals.get(col)
             total_num = total_vals.get(col)
             if done_num is not None:
@@ -568,10 +734,12 @@ def _compute_induk_overall_by_date(
     INDUK summary per date block using grouped DONE/TOTAL rollups.
     Most activities: PERCENTAGE = accumulated DONE / accumulated TOTAL.
     Trunking: mean of location PERCENTAGE within the desa (or all groups).
+    Controller/RFS: sheet TOTAL DONE / OVERALL TOTAL (recalc %).
+    MultiGE: sum of location DONE/TOTAL (recalc %).
     If group_filter is set, only that desa group is included.
     """
     header_idx = _detect_header_row_index(df)
-    header_row = df.iloc[header_idx]
+    header_row, subheader_row = _header_subheader(df, header_idx)
     location_col, progress_col = _detect_location_progress_cols(header_row)
     blocks = _find_date_blocks(header_row)
     block_dates = _extract_dates_for_blocks(df, blocks)
@@ -582,8 +750,14 @@ def _compute_induk_overall_by_date(
         if not date_label:
             continue
 
+        eq_cols = _equipment_cols(
+            act_cols,
+            len(df.columns),
+            header_row=header_row,
+            subheader_row=subheader_row,
+        )
         grouped_done, grouped_total = _accumulate_group_values(
-            location_blocks, df, act_cols
+            location_blocks, df, act_cols, eq_cols=eq_cols
         )
 
         if group_filter:
@@ -622,10 +796,39 @@ def _compute_induk_overall_by_date(
                 induk_grouped_only=group_filter is None,
             )
         for act in FRACTION_METRIC_ACTIVITIES:
-            done = campus_done.get(act)
-            total = campus_total.get(act)
-            record[f"{act}__done"] = None if done is None else int(round(done))
-            record[f"{act}__total"] = None if total is None else int(round(total))
+            if act in ACTIVITIES:
+                done = campus_done.get(act)
+                total = campus_total.get(act)
+                _attach_fraction_fields(record, act, done, total)
+
+        # MultiGE: sum location DONE/TOTAL across selected groups.
+        mg_done = 0.0
+        mg_total = 0.0
+        mg_has_d = mg_has_t = False
+        for group in groups:
+            if "MultiGE Switch" in grouped_done.get(group, {}):
+                mg_done += grouped_done[group]["MultiGE Switch"]
+                mg_has_d = True
+            if "MultiGE Switch" in grouped_total.get(group, {}):
+                mg_total += grouped_total[group]["MultiGE Switch"]
+                mg_has_t = True
+        if "MultiGE Switch" in FRACTION_METRIC_ACTIVITIES:
+            _attach_fraction_fields(
+                record,
+                "MultiGE Switch",
+                mg_done if mg_has_d else None,
+                mg_total if mg_has_t else None,
+            )
+
+        # Controller / RFS: sheet TOTAL DONE / OVERALL TOTAL only.
+        summary_eq = _read_summary_only_equipment(
+            df, act_cols, location_col, progress_col, eq_cols
+        )
+        for eq_name in SUMMARY_ONLY_EQUIPMENT:
+            d, t = summary_eq.get(eq_name, (None, None))
+            if eq_name in FRACTION_METRIC_ACTIVITIES:
+                _attach_fraction_fields(record, eq_name, d, t)
+
         if any(record.get(a) is not None for a in ACTIVITIES) or any(
             record.get(f"{a}__total") is not None for a in FRACTION_METRIC_ACTIVITIES
         ):
@@ -1076,6 +1279,9 @@ def _read_sheet_summary_for_block(
     act_cols: list[int],
     location_col: int,
     progress_col: int,
+    *,
+    header_row: pd.Series | None = None,
+    subheader_row: pd.Series | None = None,
 ) -> dict[str, dict[str, str]]:
     """
     Read TOTAL DONE / OVERALL TOTAL / AVERAGE PERCENTAGE directly from the sheet
@@ -1087,7 +1293,12 @@ def _read_sheet_summary_for_block(
         "AVERAGE PERCENTAGE": "AVERAGE PERCENTAGE",
         "AVERAGE PERCENT": "AVERAGE PERCENTAGE",
     }
-    eq_cols = _equipment_cols(act_cols, len(df.columns))
+    eq_cols = _equipment_cols(
+        act_cols,
+        len(df.columns),
+        header_row=header_row,
+        subheader_row=subheader_row,
+    )
     out: dict[str, dict[str, str]] = {}
 
     for row_idx in range(len(df)):
@@ -1106,6 +1317,9 @@ def _read_sheet_summary_for_block(
                 text = "" if raw is None else str(raw).strip()
                 row_data[act_name] = text if text else "N/A"
         for eq_name, col_idx in zip(ACTIVE_EQUIPMENT, eq_cols):
+            if col_idx is None or col_idx < 0:
+                row_data[eq_name] = "N/A"
+                continue
             raw = df.iloc[row_idx, col_idx] if col_idx < len(df.columns) else ""
             if canonical == "AVERAGE PERCENTAGE":
                 pct = _parse_percent(raw)
@@ -1124,9 +1338,11 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
 
     Per group: DONE/TOTAL accumulated from member locations; PERCENTAGE = DONE/TOTAL.
     Location DONE for Trunking/Lay/Term/Fiber is derived before summing.
+    MultiGE / Slab / Rack summed from location DONE/TOTAL.
+    Controller / RFS footer from sheet TOTAL DONE / OVERALL TOTAL (recalc %).
     """
     header_idx = _detect_header_row_index(df)
-    header_row = df.iloc[header_idx]
+    header_row, subheader_row = _header_subheader(df, header_idx)
     location_col, progress_col = _detect_location_progress_cols(header_row)
     blocks = _find_date_blocks(header_row)
     block_dates = _extract_dates_for_blocks(df, blocks)
@@ -1139,9 +1355,15 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     _, act_cols = blocks[block_i]
+    eq_cols = _equipment_cols(
+        act_cols,
+        len(df.columns),
+        header_row=header_row,
+        subheader_row=subheader_row,
+    )
     location_blocks = _iter_location_blocks(df, header_idx, location_col, progress_col)
     grouped_done, grouped_total = _accumulate_group_values(
-        location_blocks, df, act_cols
+        location_blocks, df, act_cols, eq_cols=eq_cols
     )
 
     rows: list[dict[str, str]] = []
@@ -1162,6 +1384,11 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
         )
 
         for col in TABLE_COLUMNS:
+            if col in SUMMARY_ONLY_EQUIPMENT:
+                done_row[col] = "N/A"
+                total_row[col] = "N/A"
+                pct_row[col] = "N/A"
+                continue
             done_row[col] = _display_activity_cell(done_map.get(col), col, "DONE")
             total_row[col] = _display_activity_cell(total_map.get(col), col, "TOTAL")
             if col in LOCATION_MEAN_PCT_ACTIVITIES:
@@ -1180,8 +1407,14 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
 
     # Campus footer: accumulate from all location DONE/TOTAL (after derivation).
     # AVERAGE % = TOTAL DONE / OVERALL TOTAL for key activities.
+    # Controller / RFS: sheet TOTAL DONE / OVERALL TOTAL (recalc %).
     sheet_summary = _read_sheet_summary_for_block(
-        df, act_cols, location_col, progress_col
+        df,
+        act_cols,
+        location_col,
+        progress_col,
+        header_row=header_row,
+        subheader_row=subheader_row,
     )
     key_acts = list(
         dict.fromkeys(
@@ -1189,9 +1422,18 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
         )
     )
     sum_done, sum_total = _sum_location_done_total(
-        location_blocks, df, act_cols, key_acts
+        location_blocks, df, act_cols, key_acts, eq_cols=eq_cols
     )
     campus_avg = _average_percent_from_totals(sum_done, sum_total, columns=key_acts)
+
+    summary_eq = _read_summary_only_equipment(
+        df, act_cols, location_col, progress_col, eq_cols
+    )
+    summary_eq_avg = _average_percent_from_totals(
+        {k: v[0] for k, v in summary_eq.items()},
+        {k: v[1] for k, v in summary_eq.items()},
+        columns=list(SUMMARY_ONLY_EQUIPMENT),
+    )
 
     for label in ("TOTAL DONE", "OVERALL TOTAL", "AVERAGE PERCENTAGE"):
         values = sheet_summary.get(label)
@@ -1200,6 +1442,24 @@ def _induk_grouped_snapshot(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
         row = {"Location": label, "Progress": ""}
         base = values or {}
         for col in TABLE_COLUMNS:
+            if col in SUMMARY_ONLY_EQUIPMENT:
+                d, t = summary_eq.get(col, (None, None))
+                if label == "TOTAL DONE":
+                    row[col] = (
+                        _display_activity_cell(d, col, "TOTAL DONE")
+                        if d is not None
+                        else "N/A"
+                    )
+                elif label == "OVERALL TOTAL":
+                    row[col] = (
+                        _display_activity_cell(t, col, "OVERALL TOTAL")
+                        if t is not None
+                        else "N/A"
+                    )
+                else:
+                    pct = summary_eq_avg.get(col)
+                    row[col] = f"{pct:.2f}%" if pct is not None else "N/A"
+                continue
             if label == "AVERAGE PERCENTAGE":
                 if col in LOCATION_MEAN_PCT_ACTIVITIES:
                     pct = _mean_location_percent(
@@ -1285,13 +1545,17 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
 
     All campuses (including INDUK) show per-location rows for the selected date.
     INDUK desa accumulation is used on the Dashboard only, not here.
-    DONE for Trunking / Lay Cable / Termination / Fiber is derived where needed.
+
+    MultiGE / Slab / Rack / UTP / AP: location DONE+TOTAL, recalc %;
+      footer TOTAL DONE / OVERALL TOTAL = Σ location rows, avg = done/total.
+    Fiber: DONE = %×TOTAL; footer from location sums.
+    Controller / RFS: footer from sheet TOTAL DONE / OVERALL TOTAL only (recalc %).
     """
     if df is None or df.empty:
         return pd.DataFrame()
 
     header_idx = _detect_header_row_index(df)
-    header_row = df.iloc[header_idx]
+    header_row, subheader_row = _header_subheader(df, header_idx)
     location_col, progress_col = _detect_location_progress_cols(header_row)
     blocks = _find_date_blocks(header_row)
     block_dates = _extract_dates_for_blocks(df, blocks)
@@ -1305,23 +1569,48 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
         return pd.DataFrame()
 
     _, act_cols = blocks[block_i]
-    eq_cols = _equipment_cols(act_cols, len(df.columns))
+    eq_cols = _equipment_cols(
+        act_cols,
+        len(df.columns),
+        header_row=header_row,
+        subheader_row=subheader_row,
+    )
     location_blocks = _iter_location_blocks(df, header_idx, location_col, progress_col)
 
-    # Per-location values after DONE/% rules (UTP/AP %, Fiber DONE, etc.).
+    # Per-location values after DONE/% rules (incl. MultiGE / Slab / Rack).
     block_vals_by_loc: dict[str, tuple[dict, dict, dict]] = {}
     for location, done_row, total_row, percent_row in location_blocks:
         block_vals_by_loc[location] = _location_block_values(
-            df, done_row, total_row, percent_row, act_cols
+            df,
+            done_row,
+            total_row,
+            percent_row,
+            act_cols,
+            include_equipment=True,
+            eq_cols=eq_cols,
         )
 
-    # Fiber / Slab Coring / Rack: footer totals from locations that now
-    # have data (includes buildings that were previously N/A).
-    derived_sum_done, derived_sum_total = _sum_location_done_total(
-        location_blocks, df, act_cols, list(PCT_DERIVED_DONE_EXACT)
+    # Footer sums: trusted DONE/TOTAL cols + Fiber (derived DONE).
+    sum_names = list(
+        dict.fromkeys(
+            list(TRUSTED_DONE_TOTAL_ACTIVITIES) + list(PCT_DERIVED_DONE_EXACT)
+        )
     )
-    derived_avg = _average_percent_from_totals(
-        derived_sum_done, derived_sum_total, columns=list(PCT_DERIVED_DONE_EXACT)
+    sum_done, sum_total = _sum_location_done_total(
+        location_blocks, df, act_cols, sum_names, eq_cols=eq_cols
+    )
+    sum_avg = _average_percent_from_totals(
+        sum_done, sum_total, columns=sum_names
+    )
+
+    # Controller / RFS: sheet TOTAL DONE / OVERALL TOTAL only.
+    summary_eq = _read_summary_only_equipment(
+        df, act_cols, location_col, progress_col, eq_cols
+    )
+    summary_eq_avg = _average_percent_from_totals(
+        {k: v[0] for k, v in summary_eq.items()},
+        {k: v[1] for k, v in summary_eq.items()},
+        columns=list(SUMMARY_ONLY_EQUIPMENT),
     )
 
     rows: list[dict[str, str]] = []
@@ -1329,6 +1618,26 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
 
     summary_labels = {"TOTAL DONE", "OVERALL TOTAL", "AVERAGE PERCENTAGE", "AVERAGE PERCENT"}
     progress_labels = {"DONE", "TOTAL", "PERCENT", "PERCENTAGE"}
+
+    def _footer_from_sums(name: str, kind: str) -> str | None:
+        if kind == "TOTAL DONE":
+            val = sum_done.get(name)
+            return (
+                _display_activity_cell(val, name, "TOTAL DONE")
+                if val is not None
+                else "N/A"
+            )
+        if kind == "OVERALL TOTAL":
+            val = sum_total.get(name)
+            return (
+                _display_activity_cell(val, name, "OVERALL TOTAL")
+                if val is not None
+                else "N/A"
+            )
+        if kind == "AVERAGE PERCENTAGE":
+            pct = sum_avg.get(name)
+            return f"{pct:.2f}%" if pct is not None else "N/A"
+        return None
 
     for r in range(header_idx + 1, len(df)):
         loc_val = str(df.iloc[r, location_col]).strip()
@@ -1374,28 +1683,11 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
                     else "N/A"
                 )
                 continue
-            # Footer: Fiber / Slab / Rack TOTAL DONE / OVERALL TOTAL / AVERAGE
-            # from Σ(%×TOTAL) across locations with data (not the sheet footer).
-            if is_summary and act_name in PCT_DERIVED_DONE_EXACT:
-                if summary_kind == "TOTAL DONE":
-                    val = derived_sum_done.get(act_name)
-                    row_data[act_name] = (
-                        _display_activity_cell(val, act_name, "TOTAL DONE")
-                        if val is not None
-                        else "N/A"
-                    )
-                    continue
-                if summary_kind == "OVERALL TOTAL":
-                    val = derived_sum_total.get(act_name)
-                    row_data[act_name] = (
-                        _display_activity_cell(val, act_name, "OVERALL TOTAL")
-                        if val is not None
-                        else "N/A"
-                    )
-                    continue
-                if summary_kind == "AVERAGE PERCENTAGE":
-                    pct = derived_avg.get(act_name)
-                    row_data[act_name] = f"{pct:.2f}%" if pct is not None else "N/A"
+            # Footer: trusted (UTP/AP/Slab/Rack) + Fiber from location sums.
+            if is_summary and act_name in sum_names:
+                foot = _footer_from_sums(act_name, summary_kind)
+                if foot is not None:
+                    row_data[act_name] = foot
                     continue
             if (
                 progress_out == "PERCENTAGE"
@@ -1407,9 +1699,77 @@ def campus_date_snapshot(df: pd.DataFrame, date_str: str, campus: str = "") -> p
             val = df.iloc[r, col_idx] if col_idx < len(df.columns) else ""
             kind = loc_upper if is_summary else progress_out
             row_data[act_name] = _display_activity_cell(val, act_name, kind)
+
         for eq_name, col_idx in zip(ACTIVE_EQUIPMENT, eq_cols):
+            if col_idx is None or col_idx < 0:
+                row_data[eq_name] = "N/A"
+                continue
+
+            if eq_name in SUMMARY_ONLY_EQUIPMENT:
+                if is_summary:
+                    d, t = summary_eq.get(eq_name, (None, None))
+                    if summary_kind == "TOTAL DONE":
+                        row_data[eq_name] = (
+                            _display_activity_cell(d, eq_name, "TOTAL DONE")
+                            if d is not None
+                            else "N/A"
+                        )
+                    elif summary_kind == "OVERALL TOTAL":
+                        row_data[eq_name] = (
+                            _display_activity_cell(t, eq_name, "OVERALL TOTAL")
+                            if t is not None
+                            else "N/A"
+                        )
+                    elif summary_kind == "AVERAGE PERCENTAGE":
+                        pct = summary_eq_avg.get(eq_name)
+                        row_data[eq_name] = (
+                            f"{pct:.2f}%" if pct is not None else "N/A"
+                        )
+                    else:
+                        row_data[eq_name] = "N/A"
+                else:
+                    # Location rows are not used for campus averages.
+                    val = (
+                        df.iloc[r, col_idx] if col_idx < len(df.columns) else ""
+                    )
+                    row_data[eq_name] = _display_activity_cell(
+                        val, eq_name, progress_out
+                    )
+                continue
+
+            if eq_name in TRUSTED_DONE_TOTAL_ACTIVITIES:
+                if progress_out == "PERCENTAGE":
+                    pct = pct_vals.get(eq_name)
+                    row_data[eq_name] = (
+                        f"{pct:.2f}%" if pct is not None else "N/A"
+                    )
+                    continue
+                if is_summary:
+                    foot = _footer_from_sums(eq_name, summary_kind)
+                    if foot is not None:
+                        row_data[eq_name] = foot
+                        continue
+                if progress_out == "DONE":
+                    val = done_vals.get(eq_name)
+                    row_data[eq_name] = (
+                        _display_activity_cell(val, eq_name, "DONE")
+                        if val is not None
+                        else "N/A"
+                    )
+                    continue
+                if progress_out == "TOTAL":
+                    val = total_vals.get(eq_name)
+                    row_data[eq_name] = (
+                        _display_activity_cell(val, eq_name, "TOTAL")
+                        if val is not None
+                        else "N/A"
+                    )
+                    continue
+
             val = df.iloc[r, col_idx] if col_idx < len(df.columns) else ""
-            row_data[eq_name] = _cell_display(val)
+            kind = loc_upper if is_summary else progress_out
+            row_data[eq_name] = _display_activity_cell(val, eq_name, kind)
+
         rows.append(row_data)
 
     return pd.DataFrame(rows)
@@ -1566,14 +1926,16 @@ def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
     """
     Non-INDUK campus AVERAGE series.
 
-    UTP / AP: DONE/TOTAL. Trunking: mean of location %.
-    Other activities: sheet AVERAGE PERCENTAGE row.
+    UTP / AP / Slab / Rack / MultiGE: DONE/TOTAL sums.
+    Trunking: mean of location %.
+    Fiber: derived DONE/TOTAL average.
+    Controller / RFS: sheet TOTAL DONE / OVERALL TOTAL (recalc %).
     """
     if df is None or df.empty:
         return pd.DataFrame()
 
     header_idx = _detect_header_row_index(df)
-    header_row = df.iloc[header_idx]
+    header_row, subheader_row = _header_subheader(df, header_idx)
     location_col, progress_col = _detect_location_progress_cols(header_row)
     blocks = _find_date_blocks(header_row)
     block_dates = _extract_dates_for_blocks(df, blocks)
@@ -1591,12 +1953,24 @@ def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
     for date_label, (_, act_cols) in zip(block_dates, blocks):
         if not date_label:
             continue
+        eq_cols = _equipment_cols(
+            act_cols,
+            len(df.columns),
+            header_row=header_row,
+            subheader_row=subheader_row,
+        )
         record: dict = {"Date": _normalize_date_label(date_label)}
+        sum_acts = list(
+            dict.fromkeys(
+                list(TRUSTED_DONE_TOTAL_ACTIVITIES) + list(PCT_DERIVED_DONE_EXACT)
+            )
+        )
         sum_done, sum_total = _sum_location_done_total(
             location_blocks,
             df,
             act_cols,
-            list(TRUSTED_DONE_TOTAL_ACTIVITIES) + list(PCT_DERIVED_DONE_EXACT),
+            sum_acts,
+            eq_cols=eq_cols,
         )
         derived_avg = _average_percent_from_totals(
             sum_done, sum_total, columns=list(PCT_DERIVED_DONE_EXACT)
@@ -1631,27 +2005,47 @@ def _parse_overall_summary(df: pd.DataFrame) -> pd.DataFrame:
                 record[act_name] = _parse_percent(avg_row.iloc[col_idx])
             else:
                 record[act_name] = None
+
         for act_name in FRACTION_METRIC_ACTIVITIES:
-            d = sum_done.get(act_name)
-            t = sum_total.get(act_name)
-            if d is None or t is None:
-                try:
-                    col_idx = act_cols[ACTIVITIES.index(act_name)]
-                except (ValueError, IndexError):
-                    continue
-                d = (
-                    _parse_number(done_row.iloc[col_idx])
-                    if done_row is not None and col_idx < len(done_row)
-                    else None
-                )
-                t = (
-                    _parse_number(total_row.iloc[col_idx])
-                    if total_row is not None and col_idx < len(total_row)
-                    else None
-                )
-            record[f"{act_name}__done"] = None if d is None else int(round(d))
-            record[f"{act_name}__total"] = None if t is None else int(round(t))
-        if any(record.get(a) is not None for a in ACTIVITIES):
+            if act_name in ACTIVITIES:
+                d = sum_done.get(act_name)
+                t = sum_total.get(act_name)
+                if d is None or t is None:
+                    try:
+                        col_idx = act_cols[ACTIVITIES.index(act_name)]
+                    except (ValueError, IndexError):
+                        continue
+                    d = (
+                        _parse_number(done_row.iloc[col_idx])
+                        if done_row is not None and col_idx < len(done_row)
+                        else None
+                    )
+                    t = (
+                        _parse_number(total_row.iloc[col_idx])
+                        if total_row is not None and col_idx < len(total_row)
+                        else None
+                    )
+                _attach_fraction_fields(record, act_name, d, t)
+
+        if "MultiGE Switch" in FRACTION_METRIC_ACTIVITIES:
+            _attach_fraction_fields(
+                record,
+                "MultiGE Switch",
+                sum_done.get("MultiGE Switch"),
+                sum_total.get("MultiGE Switch"),
+            )
+
+        summary_eq = _read_summary_only_equipment(
+            df, act_cols, location_col, progress_col, eq_cols
+        )
+        for eq_name in SUMMARY_ONLY_EQUIPMENT:
+            if eq_name in FRACTION_METRIC_ACTIVITIES:
+                d, t = summary_eq.get(eq_name, (None, None))
+                _attach_fraction_fields(record, eq_name, d, t)
+
+        if any(record.get(a) is not None for a in ACTIVITIES) or any(
+            record.get(f"{a}__total") is not None for a in FRACTION_METRIC_ACTIVITIES
+        ):
             records.append(record)
 
     if not records:

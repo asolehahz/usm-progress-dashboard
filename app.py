@@ -272,10 +272,23 @@ def render_activity_average_panel(
     latest = overall.iloc[-1]
     st.subheader(title)
     st.caption(
-        "Note: Percentage values are the average percentage calculated across locations."
+        "Note: Percentage values are the average percentage calculated across locations. "
+        "MultiGE Switch / Controller / RFS show Total Done / Overall Total."
     )
 
-    # Two fixed rows of 4 so cards stay aligned (equal structure per cell).
+    def _metric_display(act: str) -> str:
+        if act in FRACTION_METRIC_ACTIVITIES:
+            done = latest.get(f"{act}__done")
+            total = latest.get(f"{act}__total")
+            if done is not None and total is not None and not (
+                pd.isna(done) or pd.isna(total)
+            ):
+                return f"{int(done)}/{int(total)}"
+            return "N/A"
+        val = latest.get(act)
+        return f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
+
+    # Two rows of 4 for the eight activities.
     for row_start in (0, 4):
         metric_cols = st.columns(4)
         for j in range(4):
@@ -283,23 +296,22 @@ def render_activity_average_panel(
             if i >= len(ACTIVITIES):
                 break
             act = ACTIVITIES[i]
-            if act in FRACTION_METRIC_ACTIVITIES:
-                done = latest.get(f"{act}__done")
-                total = latest.get(f"{act}__total")
-                if done is not None and total is not None and not (
-                    pd.isna(done) or pd.isna(total)
-                ):
-                    display = f"{int(done)}/{int(total)}"
-                else:
-                    display = "N/A"
-            else:
-                val = latest.get(act)
-                display = f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
-
             buildings = (building_increases or {}).get(act)
             delta, _detail = _metric_delta_note(overall, act, buildings=buildings)
             with metric_cols[j]:
-                st.metric(act, display, delta=delta)
+                st.metric(act, _metric_display(act), delta=delta)
+
+    # Equipment fractions: MultiGE Switch, Controller, RFS.
+    equipment_metrics = [
+        a for a in FRACTION_METRIC_ACTIVITIES if a not in ACTIVITIES
+    ]
+    if equipment_metrics:
+        eq_cols = st.columns(4)
+        for j, act in enumerate(equipment_metrics):
+            buildings = (building_increases or {}).get(act)
+            delta, _detail = _metric_delta_note(overall, act, buildings=buildings)
+            with eq_cols[j]:
+                st.metric(act, _metric_display(act), delta=delta)
 
 
 def render_dashboard_chart(overall: pd.DataFrame):

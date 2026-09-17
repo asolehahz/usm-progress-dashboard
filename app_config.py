@@ -51,12 +51,18 @@ DASHBOARD_CHART_ACTIVITIES = [
 FRACTION_METRIC_ACTIVITIES = [
     "UTP Point",
     "AP Mounting",
+    "MultiGE Switch",
+    "Controller",
+    "RFS",
 ]
 
-# Sheet DONE + TOTAL are trusted (fraction updates).
+# Sheet DONE + TOTAL are trusted (fraction updates); % = DONE÷TOTAL.
 TRUSTED_DONE_TOTAL_ACTIVITIES = [
     "UTP Point",
     "AP Mounting",
+    "Slab Coring (hole)",
+    "Rack Installation (nos)",
+    "MultiGE Switch",
 ]
 
 # Sheet has % + TOTAL only (no reliable DONE). Dashboard uses location-mean %.
@@ -68,11 +74,8 @@ PCT_DERIVED_DONE_ROUND10 = [
 ]
 
 # DONE recalculated as % × TOTAL (no round-to-10).
-# Includes newly added Slab Coring / Rack Installation (was N/A, now has data).
 PCT_DERIVED_DONE_EXACT = [
     "Fiber Optic",
-    "Slab Coring (hole)",
-    "Rack Installation (nos)",
 ]
 
 PCT_DERIVED_DONE_ACTIVITIES = PCT_DERIVED_DONE_ROUND10 + PCT_DERIVED_DONE_EXACT
@@ -96,13 +99,38 @@ COUNTABLE_ACTIVITIES = [
     "Termination",
     "UTP Point",
     "AP Mounting",
+    "Slab Coring (hole)",
+    "Rack Installation (nos)",
+    "MultiGE Switch",
+    "Controller",
+    "RFS",
 ]
 
+# Equipment columns after Fiber Optic (Access Switch renamed → MultiGE Switch from Sep 15).
 ACTIVE_EQUIPMENT = [
     "Controller",
-    "Access Switch",
+    "MultiGE Switch",
     "Dist. Switch",
+    "RFS",
 ]
+
+# Campus average for these: read sheet TOTAL DONE / OVERALL TOTAL only (not location sums).
+SUMMARY_ONLY_EQUIPMENT = [
+    "Controller",
+    "RFS",
+]
+
+# Map sheet header aliases → canonical ACTIVE_EQUIPMENT name.
+EQUIPMENT_HEADER_ALIASES = {
+    "controller": "Controller",
+    "access switch": "MultiGE Switch",
+    "multige switch": "MultiGE Switch",
+    "multi ge switch": "MultiGE Switch",
+    "multige": "MultiGE Switch",
+    "dist. switch": "Dist. Switch",
+    "dist switch": "Dist. Switch",
+    "rfs": "RFS",
+}
 
 # All numeric columns shown in Excel-style daily tables.
 TABLE_COLUMNS = ACTIVITIES + ACTIVE_EQUIPMENT
