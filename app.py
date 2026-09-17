@@ -18,6 +18,7 @@ from app_config import (
     DASHBOARD_CHART_ACTIVITIES,
     FRACTION_METRIC_ACTIVITIES,
     OVERALL_DASHBOARD_OPTION,
+    OVERALL_FRACTION_ACTIVITIES,
     campus_sheet_names,
     dashboard_select_options,
     parse_dashboard_selection,
@@ -265,6 +266,9 @@ def render_activity_average_panel(
     overall: pd.DataFrame,
     title: str,
     building_increases: dict[str, list[str]] | None = None,
+    activities: list[str] | None = None,
+    *,
+    include_equipment: bool = True,
 ):
     """Latest metric boxes; optional INDUK building increase labels."""
     if overall is None or overall.empty:
@@ -273,9 +277,10 @@ def render_activity_average_panel(
 
     latest = overall.iloc[-1]
     st.subheader(title)
+    metric_names = list(activities) if activities is not None else list(ACTIVITIES)
 
     def _metric_display(act: str) -> str:
-        if act in FRACTION_METRIC_ACTIVITIES:
+        if act in FRACTION_METRIC_ACTIVITIES or act in OVERALL_FRACTION_ACTIVITIES:
             done = latest.get(f"{act}__done")
             total = latest.get(f"{act}__total")
             if done is not None and total is not None and not (
@@ -286,18 +291,18 @@ def render_activity_average_panel(
         val = latest.get(act)
         return f"{val:.1f}%" if val is not None and not pd.isna(val) else "N/A"
 
-    # Two rows of 4 for the eight activities.
-    for row_start in (0, 4):
+    # Rows of up to 4 metrics.
+    for row_start in range(0, len(metric_names), 4):
+        chunk = metric_names[row_start : row_start + 4]
         metric_cols = st.columns(4)
-        for j in range(4):
-            i = row_start + j
-            if i >= len(ACTIVITIES):
-                break
-            act = ACTIVITIES[i]
+        for j, act in enumerate(chunk):
             buildings = (building_increases or {}).get(act)
             delta, _detail = _metric_delta_note(overall, act, buildings=buildings)
             with metric_cols[j]:
                 st.metric(act, _metric_display(act), delta=delta)
+
+    if not include_equipment:
+        return
 
     # Equipment fractions: MultiGE Switch, Controller, RFS.
     equipment_metrics = [
@@ -397,6 +402,8 @@ def render_dashboard(parsed: dict[str, dict]):
         render_activity_average_panel(
             overall,
             title="Overall — all campuses",
+            activities=list(OVERALL_FRACTION_ACTIVITIES),
+            include_equipment=False,
         )
         return
 
