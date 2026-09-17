@@ -418,9 +418,10 @@ def render_dashboard(parsed: dict[str, dict]):
     data_date = _displayed_data_date(overall, raw_df)
     if data_date:
         st.info(f"**Progress data date:** {data_date}")
+    title = f"{icon} INDUK — All" if campus == "INDUK" else f"{icon} {campus}"
     render_activity_average_panel(
         overall,
-        title=f"{icon} {campus}",
+        title=title,
     )
     if (
         raw_df is not None

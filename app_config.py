@@ -205,10 +205,10 @@ def induk_desa_dashboard_options() -> list[str]:
 
 def dashboard_select_options() -> list[str]:
     """
-    Dashboard dropdown: INDUK desa options only (no plain INDUK),
+    Dashboard dropdown: all INDUK first, then each INDUK desa,
     then the other campuses.
     """
-    options: list[str] = []
+    options: list[str] = ["INDUK - All"]
     options.extend(induk_desa_dashboard_options())
     for name in campus_sheet_names():
         if name == "INDUK":
@@ -221,8 +221,12 @@ def parse_dashboard_selection(selection: str) -> tuple[str, str | None]:
     """
     Return (campus_name, induk_desa_group_or_None).
     Desa selections look like: 'INDUK - DS AMAN DAMAI (K01-08)'
+    'INDUK - All' / plain 'INDUK' = whole campus (no desa filter).
     """
-    if selection.startswith("INDUK - "):
-        return "INDUK", selection[len("INDUK - ") :]
-    return selection, None
+    text = str(selection or "").strip()
+    if text in {"INDUK", "INDUK - All", "INDUK - ALL"}:
+        return "INDUK", None
+    if text.startswith("INDUK - "):
+        return "INDUK", text[len("INDUK - ") :]
+    return text, None
 
