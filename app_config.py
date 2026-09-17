@@ -231,12 +231,21 @@ def induk_desa_dashboard_options() -> list[str]:
     return [f"INDUK - {name}" for name, _ in INDUK_LOCATION_GROUPS]
 
 
+OVERALL_DASHBOARD_OPTION = "Overall"
+
+# Cross-campus Overall view: sum DONE/TOTAL for these (show as fraction).
+OVERALL_FRACTION_ACTIVITIES = [
+    "UTP Point",
+    "AP Mounting",
+]
+
+
 def dashboard_select_options() -> list[str]:
     """
-    Dashboard dropdown: all INDUK first, then each INDUK desa,
+    Dashboard dropdown: Overall (all campuses), all INDUK, each INDUK desa,
     then the other campuses.
     """
-    options: list[str] = ["INDUK - All"]
+    options: list[str] = [OVERALL_DASHBOARD_OPTION, "INDUK - All"]
     options.extend(induk_desa_dashboard_options())
     for name in campus_sheet_names():
         if name == "INDUK":
@@ -248,10 +257,13 @@ def dashboard_select_options() -> list[str]:
 def parse_dashboard_selection(selection: str) -> tuple[str, str | None]:
     """
     Return (campus_name, induk_desa_group_or_None).
+    'Overall' = all campuses combined.
     Desa selections look like: 'INDUK - DS AMAN DAMAI (K01-08)'
     'INDUK - All' / plain 'INDUK' = whole campus (no desa filter).
     """
     text = str(selection or "").strip()
+    if text.lower() in {"overall", "all campuses"}:
+        return OVERALL_DASHBOARD_OPTION, None
     if text in {"INDUK", "INDUK - All", "INDUK - ALL"}:
         return "INDUK", None
     if text.startswith("INDUK - "):

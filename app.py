@@ -17,12 +17,14 @@ from app_config import (
     CAMPUS_ICONS,
     DASHBOARD_CHART_ACTIVITIES,
     FRACTION_METRIC_ACTIVITIES,
+    OVERALL_DASHBOARD_OPTION,
     campus_sheet_names,
     dashboard_select_options,
     parse_dashboard_selection,
 )
 from lib.auth import admin_login_form, ot_staff_login_form
 from lib.data_parser import (
+    aggregate_overall_by_date,
     available_dates,
     campus_date_snapshot,
     get_campus_overall,
@@ -386,6 +388,17 @@ def render_dashboard(parsed: dict[str, dict]):
         key="dashboard_campus_select",
     )
     campus, desa = parse_dashboard_selection(selected)
+
+    if campus == OVERALL_DASHBOARD_OPTION:
+        overall = aggregate_overall_by_date(parsed)
+        data_date = _displayed_data_date(overall)
+        if data_date:
+            st.info(f"**Progress data date:** {data_date}")
+        render_activity_average_panel(
+            overall,
+            title="Overall — all campuses",
+        )
+        return
 
     if desa:
         raw_df = parsed.get("INDUK", {}).get("raw_df")

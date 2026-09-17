@@ -17,6 +17,7 @@ from app_config import (
     FRACTION_METRIC_ACTIVITIES,
     INDUK_LOCATION_GROUPS,
     LOCATION_MEAN_PCT_ACTIVITIES,
+    OVERALL_FRACTION_ACTIVITIES,
     PCT_DERIVED_DONE_ACTIVITIES,
     PCT_DERIVED_DONE_EXACT,
     PCT_DERIVED_DONE_ROUND10,
@@ -2084,8 +2085,18 @@ def campus_sheets_summary(parsed: dict[str, dict]) -> dict[str, dict]:
 
 
 def aggregate_overall_by_date(parsed: dict[str, dict]) -> pd.DataFrame:
-    """Average activity % across all campus sheets for each date."""
-    buckets: dict[tuple[str, str], list[float]] = {}
+    """
+    Cross-campus dashboard series.
+
+    UTP Point / AP Mounting: sum DONE and TOTAL across campuses per date,
+    then fraction = Total Done / Overall Total.
+    Other activities: mean of campus % values for that date.
+    """
+    pct_buckets: dict[tuple[str, str], list[float]] = {}
+    done_sums: dict[tuple[str, str], float] = {}
+    total_sums: dict[tuple[str, str], float] = {}
+    has_done: dict[tuple[str, str], bool] = {}
+    has_total: dict[tuple[str, str], bool] = {}
 
     for name in campus_sheet_names():
         overall = parsed.get(name, {}).get("overall", pd.DataFrame())
@@ -2095,23 +2106,47 @@ def aggregate_overall_by_date(parsed: dict[str, dict]) -> pd.DataFrame:
             date_str = row.get("Date")
             if not date_str:
                 continue
+            date_key = str(date_str)
             for act in ACTIVITIES:
                 val = row.get(act)
-                if val is not None:
-                    buckets.setdefault((str(date_str), act), []).append(float(val))
+                if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                    pct_buckets.setdefault((date_key, act), []).append(float(val))
+            for act in OVERALL_FRACTION_ACTIVITIES:
+                d = row.get(f"{act}__done")
+                t = row.get(f"{act}__total")
+                if d is not None and not (isinstance(d, float) and pd.isna(d)):
+                    key = (date_key, act)
+                    done_sums[key] = done_sums.get(key, 0.0) + float(d)
+                    has_done[key] = True
+                if t is not None and not (isinstance(t, float) and pd.isna(t)):
+                    key = (date_key, act)
+                    total_sums[key] = total_sums.get(key, 0.0) + float(t)
+                    has_total[key] = True
 
-    if not buckets:
+    dates = sorted(
+        {d for d, _ in pct_buckets.keys()}
+        | {d for d, _ in done_sums.keys()}
+        | {d for d, _ in total_sums.keys()},
+        key=_parse_date_key,
+    )
+    if not dates:
         return pd.DataFrame()
 
     records = []
-    dates = sorted({d for d, _ in buckets.keys()}, key=_parse_date_key)
     for date_str in dates:
         record: dict = {"Date": date_str}
         for act in ACTIVITIES:
-            values = buckets.get((date_str, act), [])
-            if values:
-                record[act] = round(sum(values) / len(values), 2)
-        if any(record.get(a) is not None for a in ACTIVITIES):
+            if act in OVERALL_FRACTION_ACTIVITIES:
+                continue
+            values = pct_buckets.get((date_str, act), [])
+            record[act] = round(sum(values) / len(values), 2) if values else None
+        for act in OVERALL_FRACTION_ACTIVITIES:
+            d = done_sums.get((date_str, act)) if has_done.get((date_str, act)) else None
+            t = total_sums.get((date_str, act)) if has_total.get((date_str, act)) else None
+            _attach_fraction_fields(record, act, d, t)
+        if any(record.get(a) is not None for a in ACTIVITIES) or any(
+            record.get(f"{a}__total") is not None for a in OVERALL_FRACTION_ACTIVITIES
+        ):
             records.append(record)
 
     return pd.DataFrame(records)
