@@ -271,10 +271,6 @@ def render_activity_average_panel(
 
     latest = overall.iloc[-1]
     st.subheader(title)
-    st.caption(
-        "Note: Percentage values are the average percentage calculated across locations. "
-        "MultiGE Switch / Controller / RFS show Total Done / Overall Total."
-    )
 
     def _metric_display(act: str) -> str:
         if act in FRACTION_METRIC_ACTIVITIES:
