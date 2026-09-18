@@ -390,7 +390,7 @@ def render_dashboard(parsed: dict[str, dict]):
     selected = st.selectbox(
         "Select campus / desa",
         options=dashboard_select_options(),
-        key="dashboard_campus_select",
+        key="dashboard_campus_select_v2",
     )
     campus, desa = parse_dashboard_selection(selected)
 
@@ -519,8 +519,9 @@ def render_campus_detail(parsed: dict[str, dict], campus: str | None = None):
             horizontal=True,
             key=f"daily_view_{campus}",
             help=(
-                "Accumulated rolls locations into the 7 desa groups. "
-                "Full shows every building location."
+                "Accumulated rolls locations into desa groups "
+                "(incl. Cahaya Gemilang F27 and D18). "
+                "Full shows every building (K09, K10, H10, L10, F27, D18, …)."
             ),
         )
         use_full_view = not view_mode.startswith("Accumulated")

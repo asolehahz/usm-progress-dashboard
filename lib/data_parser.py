@@ -267,7 +267,9 @@ def _extract_dates_for_blocks(df: pd.DataFrame, blocks: list[tuple[int, list[int
                     found = val
                     break
         dates.append(_normalize_date_label(found) if found else found)
-        prev_end = act_cols[-1] + 1
+        # Skip past activity + equipment columns (Controller/MultiGE/Dist/RFS)
+        # so the next block's date search does not start inside this block.
+        prev_end = act_cols[-1] + 1 + len(ACTIVE_EQUIPMENT)
     return dates
 
 
