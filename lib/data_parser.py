@@ -15,6 +15,7 @@ from app_config import (
     DONE_TOTAL_PCT_ACTIVITIES,
     EQUIPMENT_HEADER_ALIASES,
     FRACTION_METRIC_ACTIVITIES,
+    INDUK_BUILDING_CODE_GROUPS,
     INDUK_LOCATION_GROUPS,
     LOCATION_MEAN_PCT_ACTIVITIES,
     OVERALL_FRACTION_ACTIVITIES,
@@ -355,13 +356,30 @@ def _parse_number(value) -> float | None:
         return None
 
 
+def _normalize_building_code(location: str) -> str | None:
+    """
+    Extract a building code like K09 / H10 / F27 from a location label.
+    Accepts single-digit forms (K9 → K09).
+    """
+    text = re.sub(r"\s+", " ", str(location or "").strip()).upper()
+    if not text:
+        return None
+    matches = re.findall(r"\b([A-Z])\s*0*(\d{1,2})\b", text)
+    if not matches:
+        return None
+    letter, num = matches[-1]
+    return f"{letter}{int(num):02d}"
+
+
 def _induk_group_name(location: str) -> str | None:
-    """Map an INDUK location label to one of the seven grouped names."""
+    """Map an INDUK location label to a grouped desa / building name."""
     loc = location.strip()
     if not loc:
         return None
     normalized = re.sub(r"\s+", " ", loc).strip()
     upper = normalized.upper()
+
+    # Prefer desa-name keywords (and short-label anchors like K18 / D18).
     for group_name, pattern in INDUK_LOCATION_GROUPS:
         if pattern.startswith("^"):
             short = re.sub(r"^DS\s+", "", upper).strip()
@@ -369,7 +387,21 @@ def _induk_group_name(location: str) -> str | None:
                 return group_name
         elif re.search(pattern, upper, re.IGNORECASE):
             return group_name
+
+    # Fallback: building code only (new MultiGE-only rows, etc.).
+    code = _normalize_building_code(upper)
+    if code and code in INDUK_BUILDING_CODE_GROUPS:
+        return INDUK_BUILDING_CODE_GROUPS[code]
     return None
+
+
+def _building_short_label(location: str) -> str:
+    """Simple building code from a location label, e.g. K01, H06, L12."""
+    code = _normalize_building_code(location)
+    if code:
+        return code
+    text = re.sub(r"\s+", " ", str(location).strip()).upper()
+    return text[:10]
 
 
 def _iter_location_blocks(
@@ -846,16 +878,6 @@ def _compute_induk_overall_by_date(
 def get_induk_desa_overall(df: pd.DataFrame, desa_name: str) -> pd.DataFrame:
     """Average % time series for one INDUK desa group."""
     return _compute_induk_overall_by_date(df, group_filter=desa_name)
-
-
-def _building_short_label(location: str) -> str:
-    """Simple building code from a location label, e.g. K01, H06, L12."""
-    text = re.sub(r"\s+", " ", str(location).strip()).upper()
-    matches = re.findall(r"\b([A-Z]\d{2})\b", text)
-    if matches:
-        return matches[-1]
-    m = re.match(r"^([A-Z]\d{1,2})\b", text)
-    return m.group(1) if m else text[:10]
 
 
 def _location_done_for_date_block(

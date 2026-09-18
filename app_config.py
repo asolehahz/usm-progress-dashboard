@@ -214,16 +214,42 @@ OT_RATES_RM_PER_HOUR = {
 CACHE_TTL_SECONDS = 300
 
 # INDUK-only: locations rolled up into these desa groups.
-# (display_name, match_pattern)
+# (display_name, match_pattern) — name keywords / short labels in the sheet.
 INDUK_LOCATION_GROUPS: list[tuple[str, str]] = [
-    ("DS AMAN DAMAI (K01-08)", r"aman\s*damai"),
+    ("DS AMAN DAMAI (K01-10)", r"aman\s*damai"),
     ("K18 & K19", r"^k\s*1[89]\b"),
-    ("DS Bakti Permai (H06,07,09, 16,17, 51)", r"bakti\s*permai"),
-    ("DS Indah Kembara (L06,07,11,12)", r"indah\s*kembara"),
+    ("DS Bakti Permai (H06,07,09,10, 16,17, 51)", r"bakti\s*permai"),
+    ("DS Indah Kembara (L06,07,10,11,12)", r"indah\s*kembara"),
     ("DS Saujana (M03, 04)", r"saujana"),
     ("DS Tekun (M05, 06)", r"tekun"),
     ("DS Cahaya Harapan (F25, 26)", r"cahaya\s*harapan"),
+    ("DS Cahaya Gemilang (F27)", r"cahaya\s*gemilang"),
+    ("D18", r"^d\s*0*18\b"),
 ]
+
+# Building codes → group when the location label has no desa keyword
+# (e.g. new MultiGE-only rows: K9, K10, H10, L10, F27, D18).
+INDUK_BUILDING_CODE_GROUPS: dict[str, str] = {
+    **{f"K{i:02d}": "DS AMAN DAMAI (K01-10)" for i in range(1, 11)},
+    "K18": "K18 & K19",
+    "K19": "K18 & K19",
+    **{
+        code: "DS Bakti Permai (H06,07,09,10, 16,17, 51)"
+        for code in ("H06", "H07", "H09", "H10", "H16", "H17", "H51")
+    },
+    **{
+        code: "DS Indah Kembara (L06,07,10,11,12)"
+        for code in ("L06", "L07", "L10", "L11", "L12")
+    },
+    "M03": "DS Saujana (M03, 04)",
+    "M04": "DS Saujana (M03, 04)",
+    "M05": "DS Tekun (M05, 06)",
+    "M06": "DS Tekun (M05, 06)",
+    "F25": "DS Cahaya Harapan (F25, 26)",
+    "F26": "DS Cahaya Harapan (F25, 26)",
+    "F27": "DS Cahaya Gemilang (F27)",
+    "D18": "D18",
+}
 
 
 def induk_desa_dashboard_options() -> list[str]:
@@ -258,7 +284,7 @@ def parse_dashboard_selection(selection: str) -> tuple[str, str | None]:
     """
     Return (campus_name, induk_desa_group_or_None).
     'Overall' = all campuses combined.
-    Desa selections look like: 'INDUK - DS AMAN DAMAI (K01-08)'
+    Desa selections look like: 'INDUK - DS AMAN DAMAI (K01-10)'
     'INDUK - All' / plain 'INDUK' = whole campus (no desa filter).
     """
     text = str(selection or "").strip()
