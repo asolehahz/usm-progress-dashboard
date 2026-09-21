@@ -845,7 +845,9 @@ def build_staff_first_payment_excel(
     staff_name: str,
 ) -> bytes:
     """
-    One Excel workbook for HR: Ringkasan + Rekod OT for 1st payment only.
+    One Excel workbook for HR:
+      Ringkasan — 1st payment totals (no Field/Value header row)
+      Rekod OT — full OT details table for this person (all payments)
     """
     period = first_payment_rows(staff_df, first_date)
     rates = OT_RATES_RM_PER_HOUR.get(str(role).upper(), OT_RATES_RM_PER_HOUR["PIC"])
@@ -869,33 +871,37 @@ def build_staff_first_payment_excel(
         else "1st payment"
     )
 
+    # Two columns, no header row — label | value
     summary = pd.DataFrame(
         [
-            {"Field": "Role", "Value": str(role).upper()},
-            {"Field": "Nama Staf", "Value": staff_name},
-            {"Field": "No Telefon", "Value": telefon},
-            {"Field": "No IC", "Value": ic},
-            {"Field": "Jabatan/Unit", "Value": ", ".join(units)},
-            {"Field": "Payment", "Value": payment_label},
-            {"Field": "Hours Biasa", "Value": metrics["Hours Biasa"]},
-            {"Field": "Hours Hujung Minggu", "Value": metrics["Hours Hujung Minggu"]},
-            {"Field": "Hours Cuti Umum", "Value": metrics["Hours Cuti Umum"]},
-            {"Field": "Total Hours", "Value": metrics["Total Hours"]},
-            {"Field": "Pay Biasa (RM)", "Value": metrics["Pay Biasa (RM)"]},
-            {
-                "Field": "Pay Hujung Minggu (RM)",
-                "Value": metrics["Pay Hujung Minggu (RM)"],
-            },
-            {"Field": "Pay Cuti Umum (RM)", "Value": metrics["Pay Cuti Umum (RM)"]},
-            {"Field": "Total Pay (RM)", "Value": metrics["Total Pay (RM)"]},
+            ["Role", str(role).upper()],
+            ["Nama Staf", staff_name],
+            ["No Telefon", telefon],
+            ["No IC", ic],
+            ["Jabatan/Unit", ", ".join(units)],
+            ["Payment (calculation)", payment_label],
+            ["Hours Biasa", metrics["Hours Biasa"]],
+            ["Hours Hujung Minggu", metrics["Hours Hujung Minggu"]],
+            ["Hours Cuti Umum", metrics["Hours Cuti Umum"]],
+            ["Total Hours", metrics["Total Hours"]],
+            ["Pay Biasa (RM)", metrics["Pay Biasa (RM)"]],
+            ["Pay Hujung Minggu (RM)", metrics["Pay Hujung Minggu (RM)"]],
+            ["Pay Cuti Umum (RM)", metrics["Pay Cuti Umum (RM)"]],
+            ["Total Pay (RM)", metrics["Total Pay (RM)"]],
         ]
     )
-    details = detail_table_for_display(period)
+
+    # Full OT details (same columns as on-screen OT details table).
+    full_details = detail_table_for_display(
+        attach_payment_periods(staff_df, first_date)
+    )
 
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        summary.to_excel(writer, sheet_name="Ringkasan", index=False)
-        details.to_excel(writer, sheet_name="Rekod OT", index=False)
+        summary.to_excel(
+            writer, sheet_name="Ringkasan", index=False, header=False
+        )
+        full_details.to_excel(writer, sheet_name="Rekod OT", index=False)
     return buffer.getvalue()
 
 
@@ -905,20 +911,19 @@ def build_all_staff_first_payment_zip(
     first_date: date | None,
 ) -> tuple[bytes, int]:
     """
-    ZIP of one Excel per staff (1st payment only).
+    ZIP of one Excel per staff.
 
+    Each file: 1st-payment Ringkasan + full Rekod OT details.
     Filenames: 'PTD - NAME.xlsx' / 'PIC - NAME.xlsx'.
-    Skips staff with no 1st-payment rows. Returns (zip_bytes, file_count).
+    Returns (zip_bytes, file_count).
     """
-    period_all = first_payment_rows(df, first_date)
-    names = staff_names(period_all)
+    names = staff_names(df)
     buffer = BytesIO()
     count = 0
     with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for name in names:
             staff_df = filter_staff(df, name)
-            period = first_payment_rows(staff_df, first_date)
-            if period.empty:
+            if staff_df.empty:
                 continue
             xlsx = build_staff_first_payment_excel(
                 staff_df, role, first_date, name

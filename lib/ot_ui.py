@@ -20,7 +20,6 @@ from lib.ot_staff import (
     filter_payment_period,
     filter_staff,
     first_nonempty_value,
-    first_payment_rows,
     jabatan_units,
     latest_ot_date,
     payment_period_label,
@@ -40,7 +39,7 @@ def _render_hr_first_payment_downloads(
     first_date: date | None,
     key_prefix: str,
 ):
-    """Bulk ZIP + helper text for HR Excel packs (1st payment only)."""
+    """Bulk ZIP for HR: 1st-payment summary + full OT details per staff."""
     st.subheader("Download for HR — 1st payment")
     period_label = (
         payment_period_label(first_date, 1)
@@ -48,17 +47,17 @@ def _render_hr_first_payment_downloads(
         else "1st payment"
     )
     st.caption(
-        f"One Excel file per staff for **{period_label}** only. "
-        f"Files are named like `{role} - NAME.xlsx` (Ringkasan + Rekod OT)."
+        f"One Excel per staff: **Ringkasan** = {period_label} totals, "
+        f"**Rekod OT** = full OT details. "
+        f"Files named like `{role} - NAME.xlsx`."
     )
     if df is None or df.empty or first_date is None:
         st.info("No OT data available to export yet.")
         return
 
-    first_rows = first_payment_rows(df, first_date)
-    n_staff = len(staff_names(first_rows))
+    n_staff = len(staff_names(df))
     if n_staff == 0:
-        st.info("No staff have OT rows in the 1st payment period.")
+        st.info("No staff OT rows to export.")
         return
 
     zip_key = f"{key_prefix}_hr_zip_bytes"
@@ -280,14 +279,13 @@ def render_ot_role_tab(
         ic=ic,
     )
 
-    # Single-staff Excel for HR (1st payment only).
-    first_only = first_payment_rows(staff_df, first_date)
-    if first_date is not None and not first_only.empty:
+    # Single-staff Excel for HR: 1st-payment summary + full OT details.
+    if first_date is not None and not staff_df.empty:
         xlsx = build_staff_first_payment_excel(
             staff_df, role, first_date, staff
         )
         st.download_button(
-            label="Download Excel — 1st payment only",
+            label="Download Excel (1st payment summary + full OT details)",
             data=xlsx,
             file_name=f"{safe_export_stem(role, staff)}.xlsx",
             mime=(
