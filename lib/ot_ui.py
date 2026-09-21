@@ -47,8 +47,8 @@ def _render_hr_first_payment_downloads(
         else "1st payment"
     )
     st.caption(
-        f"One Excel per staff: **Ringkasan** = {period_label} totals, "
-        f"**Rekod OT** = full OT details. "
+        f"One Excel per staff (single sheet): **{period_label}** summary at the top, "
+        f"then that payment’s **OT details** table below. "
         f"Files named like `{role} - NAME.xlsx`."
     )
     if df is None or df.empty or first_date is None:
@@ -285,7 +285,7 @@ def render_ot_role_tab(
             staff_df, role, first_date, staff
         )
         st.download_button(
-            label="Download Excel (1st payment summary + full OT details)",
+            label="Download Excel (summary + OT details, one sheet)",
             data=xlsx,
             file_name=f"{safe_export_stem(role, staff)}.xlsx",
             mime=(

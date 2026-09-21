@@ -845,9 +845,9 @@ def build_staff_first_payment_excel(
     staff_name: str,
 ) -> bytes:
     """
-    One Excel workbook for HR:
-      Ringkasan — 1st payment totals (no Field/Value header row)
-      Rekod OT — full OT details table for this person (all payments)
+    One Excel workbook / one sheet for HR:
+      top  — 1st payment summary (no Field/Value header)
+      then — full OT details table (same columns as on-screen OT details)
     """
     period = first_payment_rows(staff_df, first_date)
     rates = OT_RATES_RM_PER_HOUR.get(str(role).upper(), OT_RATES_RM_PER_HOUR["PIC"])
@@ -871,37 +871,44 @@ def build_staff_first_payment_excel(
         else "1st payment"
     )
 
-    # Two columns, no header row — label | value
-    summary = pd.DataFrame(
-        [
-            ["Role", str(role).upper()],
-            ["Nama Staf", staff_name],
-            ["No Telefon", telefon],
-            ["No IC", ic],
-            ["Jabatan/Unit", ", ".join(units)],
-            ["Payment (calculation)", payment_label],
-            ["Hours Biasa", metrics["Hours Biasa"]],
-            ["Hours Hujung Minggu", metrics["Hours Hujung Minggu"]],
-            ["Hours Cuti Umum", metrics["Hours Cuti Umum"]],
-            ["Total Hours", metrics["Total Hours"]],
-            ["Pay Biasa (RM)", metrics["Pay Biasa (RM)"]],
-            ["Pay Hujung Minggu (RM)", metrics["Pay Hujung Minggu (RM)"]],
-            ["Pay Cuti Umum (RM)", metrics["Pay Cuti Umum (RM)"]],
-            ["Total Pay (RM)", metrics["Total Pay (RM)"]],
-        ]
-    )
+    summary_rows = [
+        ["Role", str(role).upper()],
+        ["Nama Staf", staff_name],
+        ["No Telefon", telefon],
+        ["No IC", ic],
+        ["Jabatan/Unit", ", ".join(units)],
+        ["Payment", payment_label],
+        ["Hours Biasa", metrics["Hours Biasa"]],
+        ["Hours Hujung Minggu", metrics["Hours Hujung Minggu"]],
+        ["Hours Cuti Umum", metrics["Hours Cuti Umum"]],
+        ["Total Hours", metrics["Total Hours"]],
+        ["Pay Biasa (RM)", metrics["Pay Biasa (RM)"]],
+        ["Pay Hujung Minggu (RM)", metrics["Pay Hujung Minggu (RM)"]],
+        ["Pay Cuti Umum (RM)", metrics["Pay Cuti Umum (RM)"]],
+        ["Total Pay (RM)", metrics["Total Pay (RM)"]],
+    ]
 
-    # Full OT details (same columns as on-screen OT details table).
-    full_details = detail_table_for_display(
-        attach_payment_periods(staff_df, first_date)
-    )
+    # OT details for 1st payment (same rows HR expects under the summary).
+    details = detail_table_for_display(period)
+    detail_headers = list(details.columns)
+    detail_values = details.fillna("").astype(object).values.tolist()
+
+    # One sheet: summary block, blank row, then details table with its own header.
+    sheet_rows: list[list[object]] = [list(row) for row in summary_rows]
+    sheet_rows.append([])
+    if detail_headers:
+        sheet_rows.append(detail_headers)
+        sheet_rows.extend(detail_values)
+
+    # Pad rows so every row has the same width (Excel-friendly).
+    width = max((len(r) for r in sheet_rows), default=2)
+    width = max(width, 2)
+    padded = [list(r) + [""] * (width - len(r)) for r in sheet_rows]
+    out_df = pd.DataFrame(padded)
 
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        summary.to_excel(
-            writer, sheet_name="Ringkasan", index=False, header=False
-        )
-        full_details.to_excel(writer, sheet_name="Rekod OT", index=False)
+        out_df.to_excel(writer, sheet_name="OT", index=False, header=False)
     return buffer.getvalue()
 
 
