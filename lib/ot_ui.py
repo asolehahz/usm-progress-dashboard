@@ -12,22 +12,75 @@ from lib.ot_staff import (
     append_total_row,
     apply_whatsapp_telefon_links,
     attach_payment_periods,
+    build_all_staff_first_payment_zip,
+    build_staff_first_payment_excel,
     detail_table_for_display,
     earliest_ot_date,
     filter_jabatan,
     filter_payment_period,
     filter_staff,
     first_nonempty_value,
+    first_payment_rows,
     jabatan_units,
     latest_ot_date,
     payment_period_label,
     payment_period_options,
     payment_period_ot_summary,
+    safe_export_stem,
     staff_names,
     staff_summary_for_display,
     whatsapp_url_from_phone,
 )
 from lib.sheets_client import fetch_ot_pic, fetch_ot_ptd
+
+
+def _render_hr_first_payment_downloads(
+    df: pd.DataFrame,
+    role: str,
+    first_date: date | None,
+    key_prefix: str,
+):
+    """Bulk ZIP + helper text for HR Excel packs (1st payment only)."""
+    st.subheader("Download for HR — 1st payment")
+    period_label = (
+        payment_period_label(first_date, 1)
+        if first_date is not None
+        else "1st payment"
+    )
+    st.caption(
+        f"One Excel file per staff for **{period_label}** only. "
+        f"Files are named like `{role} - NAME.xlsx` (Ringkasan + Rekod OT)."
+    )
+    if df is None or df.empty or first_date is None:
+        st.info("No OT data available to export yet.")
+        return
+
+    first_rows = first_payment_rows(df, first_date)
+    n_staff = len(staff_names(first_rows))
+    if n_staff == 0:
+        st.info("No staff have OT rows in the 1st payment period.")
+        return
+
+    zip_key = f"{key_prefix}_hr_zip_bytes"
+    count_key = f"{key_prefix}_hr_zip_count"
+    if st.button(
+        f"Prepare ZIP ({n_staff} staff)",
+        key=f"{key_prefix}_hr_prepare_zip",
+    ):
+        with st.spinner("Building Excel files…"):
+            data, count = build_all_staff_first_payment_zip(df, role, first_date)
+        st.session_state[zip_key] = data
+        st.session_state[count_key] = count
+
+    if zip_key in st.session_state and st.session_state[zip_key]:
+        count = int(st.session_state.get(count_key) or 0)
+        st.download_button(
+            label=f"Download ZIP — {count} Excel files",
+            data=st.session_state[zip_key],
+            file_name=f"{role} - 1st payment OT.zip",
+            mime="application/zip",
+            key=f"{key_prefix}_hr_download_zip",
+        )
 
 
 def _telefon_column_config() -> dict:
@@ -227,6 +280,23 @@ def render_ot_role_tab(
         ic=ic,
     )
 
+    # Single-staff Excel for HR (1st payment only).
+    first_only = first_payment_rows(staff_df, first_date)
+    if first_date is not None and not first_only.empty:
+        xlsx = build_staff_first_payment_excel(
+            staff_df, role, first_date, staff
+        )
+        st.download_button(
+            label="Download Excel — 1st payment only",
+            data=xlsx,
+            file_name=f"{safe_export_stem(role, staff)}.xlsx",
+            mime=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+            key=f"{key_prefix}_staff_first_pay_xlsx",
+        )
+
     st.subheader("OT details")
     tagged = attach_payment_periods(staff_df, first_date)
     _show_ot_dataframe(detail_table_for_display(tagged))
@@ -263,6 +333,10 @@ def render_overall_pay_role(
     unit_last = latest_ot_date(unit_df) or last_date
     jabatan_label = (
         selected_jabatan if selected_jabatan != "All" else "all units"
+    )
+
+    _render_hr_first_payment_downloads(
+        unit_df, role, first_date, key_prefix
     )
 
     _show_payment_totals(

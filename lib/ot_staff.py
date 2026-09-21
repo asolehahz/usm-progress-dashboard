@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import calendar
+import re
+import zipfile
 from datetime import date, datetime, timedelta
+from io import BytesIO
 
 import pandas as pd
 
@@ -817,3 +820,109 @@ def staff_summary_for_display(df: pd.DataFrame) -> pd.DataFrame:
         cols.insert(insert_at, "WhatsApp")
         out = out[cols]
     return out
+
+
+def safe_export_stem(role: str, staff_name: str) -> str:
+    """Excel/zip entry stem: 'PTD - NAME' / 'PIC - NAME'."""
+    role_text = str(role or "").strip().upper() or "OT"
+    name = str(staff_name or "").strip() or "Unknown"
+    name = re.sub(r'[<>:"/\\|?*]', "", name)
+    name = re.sub(r"\s+", " ", name).strip()
+    return f"{role_text} - {name}"
+
+
+def first_payment_rows(
+    df: pd.DataFrame, first_date: date | None
+) -> pd.DataFrame:
+    """OT rows that fall in the 1st payment period only."""
+    return filter_payment_period(df, 1, first_date)
+
+
+def build_staff_first_payment_excel(
+    staff_df: pd.DataFrame,
+    role: str,
+    first_date: date | None,
+    staff_name: str,
+) -> bytes:
+    """
+    One Excel workbook for HR: Ringkasan + Rekod OT for 1st payment only.
+    """
+    period = first_payment_rows(staff_df, first_date)
+    rates = OT_RATES_RM_PER_HOUR.get(str(role).upper(), OT_RATES_RM_PER_HOUR["PIC"])
+    metrics = (
+        _hours_pay_for_rows(period, rates) if not period.empty else _empty_hours_pay()
+    )
+    telefon = first_nonempty_value(
+        staff_df.get("No Telefon", pd.Series(dtype=str))
+    ) or ""
+    ic = first_nonempty_value(staff_df.get("No IC", pd.Series(dtype=str))) or ""
+    units = sorted(
+        {
+            str(v).strip()
+            for v in staff_df.get("Jabatan/Unit", pd.Series(dtype=str))
+            if str(v).strip()
+        }
+    )
+    payment_label = (
+        payment_period_label(first_date, 1)
+        if first_date is not None
+        else "1st payment"
+    )
+
+    summary = pd.DataFrame(
+        [
+            {"Field": "Role", "Value": str(role).upper()},
+            {"Field": "Nama Staf", "Value": staff_name},
+            {"Field": "No Telefon", "Value": telefon},
+            {"Field": "No IC", "Value": ic},
+            {"Field": "Jabatan/Unit", "Value": ", ".join(units)},
+            {"Field": "Payment", "Value": payment_label},
+            {"Field": "Hours Biasa", "Value": metrics["Hours Biasa"]},
+            {"Field": "Hours Hujung Minggu", "Value": metrics["Hours Hujung Minggu"]},
+            {"Field": "Hours Cuti Umum", "Value": metrics["Hours Cuti Umum"]},
+            {"Field": "Total Hours", "Value": metrics["Total Hours"]},
+            {"Field": "Pay Biasa (RM)", "Value": metrics["Pay Biasa (RM)"]},
+            {
+                "Field": "Pay Hujung Minggu (RM)",
+                "Value": metrics["Pay Hujung Minggu (RM)"],
+            },
+            {"Field": "Pay Cuti Umum (RM)", "Value": metrics["Pay Cuti Umum (RM)"]},
+            {"Field": "Total Pay (RM)", "Value": metrics["Total Pay (RM)"]},
+        ]
+    )
+    details = detail_table_for_display(period)
+
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        summary.to_excel(writer, sheet_name="Ringkasan", index=False)
+        details.to_excel(writer, sheet_name="Rekod OT", index=False)
+    return buffer.getvalue()
+
+
+def build_all_staff_first_payment_zip(
+    df: pd.DataFrame,
+    role: str,
+    first_date: date | None,
+) -> tuple[bytes, int]:
+    """
+    ZIP of one Excel per staff (1st payment only).
+
+    Filenames: 'PTD - NAME.xlsx' / 'PIC - NAME.xlsx'.
+    Skips staff with no 1st-payment rows. Returns (zip_bytes, file_count).
+    """
+    period_all = first_payment_rows(df, first_date)
+    names = staff_names(period_all)
+    buffer = BytesIO()
+    count = 0
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name in names:
+            staff_df = filter_staff(df, name)
+            period = first_payment_rows(staff_df, first_date)
+            if period.empty:
+                continue
+            xlsx = build_staff_first_payment_excel(
+                staff_df, role, first_date, name
+            )
+            zf.writestr(f"{safe_export_stem(role, name)}.xlsx", xlsx)
+            count += 1
+    return buffer.getvalue(), count
