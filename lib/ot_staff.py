@@ -807,9 +807,10 @@ def hr_export_detail_table(df: pd.DataFrame, role: str) -> pd.DataFrame:
     """
     HR Excel detail columns:
       No. | Tarikh | Jenis Hari (…) | Masa Mula | Masa Tamat |
-      Jumlah Jam | Jumlah OT | Catatan / Skop Kerja yang Dibuat
+      Jumlah Jam | Jumlah OT (RM) | Catatan / Skop Kerja yang Dibuat
 
     Jumlah OT = decimal hours × rate for Jenis Hari (PTD/PIC rates).
+    Last row is JUMLAH totals for Jumlah Jam and Jumlah OT (RM).
     """
     headers = [
         "No.",
@@ -818,7 +819,7 @@ def hr_export_detail_table(df: pd.DataFrame, role: str) -> pd.DataFrame:
         "Masa Mula",
         "Masa Tamat",
         "Jumlah Jam",
-        "Jumlah OT",
+        "Jumlah OT (RM)",
         "Catatan / Skop Kerja yang Dibuat",
     ]
     if df is None or df.empty:
@@ -832,6 +833,8 @@ def hr_export_detail_table(df: pd.DataFrame, role: str) -> pd.DataFrame:
         ).reset_index(drop=True)
 
     rows: list[dict[str, object]] = []
+    total_hours = 0.0
+    total_ot = 0.0
     for i, (_, row) in enumerate(work.iterrows(), start=1):
         raw_jenis = row.get("Jenis Hari", "")
         jenis = _normalize_day_type(str(raw_jenis or "")) or str(raw_jenis or "").strip()
@@ -848,6 +851,10 @@ def hr_export_detail_table(df: pd.DataFrame, role: str) -> pd.DataFrame:
 
         rate = float(rates.get(jenis, 0.0) or 0.0)
         jumlah_ot = round(hours_f * rate, 2) if hours_f is not None else ""
+        if hours_f is not None:
+            total_hours += hours_f
+        if isinstance(jumlah_ot, (int, float)):
+            total_ot += float(jumlah_ot)
 
         rows.append(
             {
@@ -857,12 +864,25 @@ def hr_export_detail_table(df: pd.DataFrame, role: str) -> pd.DataFrame:
                 "Masa Mula": str(row.get("Masa mula", "") or "").strip(),
                 "Masa Tamat": str(row.get("Masa Tamat", "") or "").strip(),
                 "Jumlah Jam": _format_jumlah_jam(row.get("Jumlah"), hours_f),
-                "Jumlah OT": jumlah_ot,
+                "Jumlah OT (RM)": jumlah_ot,
                 "Catatan / Skop Kerja yang Dibuat": str(
                     row.get("Skop kerja", "") or ""
                 ).strip(),
             }
         )
+
+    rows.append(
+        {
+            "No.": "",
+            "Tarikh": "",
+            "Jenis Hari (Biasa / Weekend / Cuti Umum)": "",
+            "Masa Mula": "",
+            "Masa Tamat": "JUMLAH",
+            "Jumlah Jam": _format_jumlah_jam("", total_hours),
+            "Jumlah OT (RM)": round(total_ot, 2),
+            "Catatan / Skop Kerja yang Dibuat": "",
+        }
+    )
     return pd.DataFrame(rows, columns=headers)
 
 
@@ -973,7 +993,7 @@ def build_staff_first_payment_excel(
         ],
     ]
 
-    # OT details for 1st payment — HR claim columns + Jumlah OT.
+    # OT details for 1st payment — HR claim columns + Jumlah OT + JUMLAH row.
     details = hr_export_detail_table(period, role)
     detail_headers = list(details.columns)
     detail_values = details.fillna("").astype(object).values.tolist()
@@ -981,9 +1001,12 @@ def build_staff_first_payment_excel(
     # One sheet: summary block, blank row, then details table with its own header.
     sheet_rows: list[list[object]] = [list(row) for row in summary_rows]
     sheet_rows.append([])
+    jumlah_sheet_row: int | None = None  # 1-based Excel row for bold totals
     if detail_headers:
         sheet_rows.append(detail_headers)
         sheet_rows.extend(detail_values)
+        # Last detail row is JUMLAH (summary_rows + blank + header + n data rows)
+        jumlah_sheet_row = len(sheet_rows)  # 1-based when written without header
 
     # Pad rows so every row has the same width (Excel-friendly).
     width = max((len(r) for r in sheet_rows), default=2)
@@ -994,6 +1017,19 @@ def build_staff_first_payment_excel(
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         out_df.to_excel(writer, sheet_name="OT", index=False, header=False)
+        if jumlah_sheet_row is not None:
+            from openpyxl.styles import Border, Font, Side
+
+            ws = writer.sheets["OT"]
+            bold = Font(bold=True)
+            thick = Side(style="medium", color="000000")
+            box = Border(left=thick, right=thick, top=thick, bottom=thick)
+            # Bold JUMLAH label + Jumlah Jam + Jumlah OT (RM) cells (cols E–G).
+            for col in range(1, width + 1):
+                cell = ws.cell(row=jumlah_sheet_row, column=col)
+                cell.font = bold
+            for col in (5, 6, 7):  # Masa Tamat / Jumlah Jam / Jumlah OT (RM)
+                ws.cell(row=jumlah_sheet_row, column=col).border = box
     return buffer.getvalue()
 
 
