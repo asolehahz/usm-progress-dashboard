@@ -48,8 +48,8 @@ def _render_hr_first_payment_downloads(
     )
     st.caption(
         f"One Excel per staff (single sheet): **{period_label}** summary at the top, "
-        f"then that payment’s **OT details** table below. "
-        f"Files named like `{role} - NAME.xlsx`."
+        f"then OT rows with **Jumlah OT = Jumlah Jam × rate** "
+        f"(Biasa / Weekend / Cuti). Files named like `{role} - NAME.xlsx`."
     )
     if df is None or df.empty or first_date is None:
         st.info("No OT data available to export yet.")
@@ -74,7 +74,7 @@ def _render_hr_first_payment_downloads(
     if zip_key in st.session_state and st.session_state[zip_key]:
         count = int(st.session_state.get(count_key) or 0)
         st.download_button(
-            label=f"Download ZIP — {count} Excel files",
+            label="Download",
             data=st.session_state[zip_key],
             file_name=f"{role} - 1st payment OT.zip",
             mime="application/zip",
@@ -285,7 +285,7 @@ def render_ot_role_tab(
             staff_df, role, first_date, staff
         )
         st.download_button(
-            label="Download Excel (summary + OT details, one sheet)",
+            label="Download",
             data=xlsx,
             file_name=f"{safe_export_stem(role, staff)}.xlsx",
             mime=(

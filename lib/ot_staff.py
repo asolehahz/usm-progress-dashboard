@@ -785,6 +785,87 @@ def detail_table_for_display(df: pd.DataFrame) -> pd.DataFrame:
     return out[keep]
 
 
+def _format_jumlah_jam(jumlah, hours) -> str:
+    """Prefer sheet Jumlah (e.g. 4:00:00); else format decimal Hours."""
+    text = str(jumlah or "").strip()
+    if text and text.upper() not in {"N/A", "NA", "-", "NONE"}:
+        return text
+    try:
+        h = float(hours)
+    except (TypeError, ValueError):
+        return ""
+    if h != h:  # NaN
+        return ""
+    total_seconds = int(round(h * 3600))
+    hh = total_seconds // 3600
+    mm = (total_seconds % 3600) // 60
+    ss = total_seconds % 60
+    return f"{hh}:{mm:02d}:{ss:02d}"
+
+
+def hr_export_detail_table(df: pd.DataFrame, role: str) -> pd.DataFrame:
+    """
+    HR Excel detail columns:
+      No. | Tarikh | Jenis Hari (…) | Masa Mula | Masa Tamat |
+      Jumlah Jam | Jumlah OT | Catatan / Skop Kerja yang Dibuat
+
+    Jumlah OT = decimal hours × rate for Jenis Hari (PTD/PIC rates).
+    """
+    headers = [
+        "No.",
+        "Tarikh",
+        "Jenis Hari (Biasa / Weekend / Cuti Umum)",
+        "Masa Mula",
+        "Masa Tamat",
+        "Jumlah Jam",
+        "Jumlah OT",
+        "Catatan / Skop Kerja yang Dibuat",
+    ]
+    if df is None or df.empty:
+        return pd.DataFrame(columns=headers)
+
+    rates = OT_RATES_RM_PER_HOUR.get(str(role).upper(), OT_RATES_RM_PER_HOUR["PIC"])
+    work = df.copy()
+    if "Date_parsed" in work.columns:
+        work = work.sort_values(
+            by=["Date_parsed"], ascending=True, na_position="last"
+        ).reset_index(drop=True)
+
+    rows: list[dict[str, object]] = []
+    for i, (_, row) in enumerate(work.iterrows(), start=1):
+        raw_jenis = row.get("Jenis Hari", "")
+        jenis = _normalize_day_type(str(raw_jenis or "")) or str(raw_jenis or "").strip()
+        hours_val = row.get("Hours")
+        try:
+            hours_f = (
+                float(hours_val)
+                if hours_val is not None
+                and not (isinstance(hours_val, float) and pd.isna(hours_val))
+                else None
+            )
+        except (TypeError, ValueError):
+            hours_f = _parse_hours(row.get("Jumlah"))
+
+        rate = float(rates.get(jenis, 0.0) or 0.0)
+        jumlah_ot = round(hours_f * rate, 2) if hours_f is not None else ""
+
+        rows.append(
+            {
+                "No.": i,
+                "Tarikh": str(row.get("Tarikh", "") or "").strip(),
+                "Jenis Hari (Biasa / Weekend / Cuti Umum)": jenis,
+                "Masa Mula": str(row.get("Masa mula", "") or "").strip(),
+                "Masa Tamat": str(row.get("Masa Tamat", "") or "").strip(),
+                "Jumlah Jam": _format_jumlah_jam(row.get("Jumlah"), hours_f),
+                "Jumlah OT": jumlah_ot,
+                "Catatan / Skop Kerja yang Dibuat": str(
+                    row.get("Skop kerja", "") or ""
+                ).strip(),
+            }
+        )
+    return pd.DataFrame(rows, columns=headers)
+
+
 def staff_summary_for_display(df: pd.DataFrame) -> pd.DataFrame:
     """
     Nest No Telefon / No IC under Nama Staf (same layout as the staff heading),
@@ -847,7 +928,7 @@ def build_staff_first_payment_excel(
     """
     One Excel workbook / one sheet for HR:
       top  — 1st payment summary (no Field/Value header)
-      then — full OT details table (same columns as on-screen OT details)
+      then — OT details in HR columns; Jumlah OT = jam × day-type rate
     """
     period = first_payment_rows(staff_df, first_date)
     rates = OT_RATES_RM_PER_HOUR.get(str(role).upper(), OT_RATES_RM_PER_HOUR["PIC"])
@@ -886,10 +967,14 @@ def build_staff_first_payment_excel(
         ["Pay Hujung Minggu (RM)", metrics["Pay Hujung Minggu (RM)"]],
         ["Pay Cuti Umum (RM)", metrics["Pay Cuti Umum (RM)"]],
         ["Total Pay (RM)", metrics["Total Pay (RM)"]],
+        [
+            "Rate Biasa / Weekend / Cuti (RM/jam)",
+            f"{rates['Biasa']} / {rates['Hujung Minggu']} / {rates['Cuti Umum']}",
+        ],
     ]
 
-    # OT details for 1st payment (same rows HR expects under the summary).
-    details = detail_table_for_display(period)
+    # OT details for 1st payment — HR claim columns + Jumlah OT.
+    details = hr_export_detail_table(period, role)
     detail_headers = list(details.columns)
     detail_values = details.fillna("").astype(object).values.tolist()
 
