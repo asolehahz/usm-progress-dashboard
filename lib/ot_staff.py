@@ -939,18 +939,19 @@ def first_payment_rows(
     return filter_payment_period(df, 1, first_date)
 
 
-def build_staff_first_payment_excel(
+def build_staff_payment_excel(
     staff_df: pd.DataFrame,
     role: str,
     first_date: date | None,
     staff_name: str,
+    period_num: int = 1,
 ) -> bytes:
     """
     One Excel workbook / one sheet for HR:
-      top  — 1st payment summary (no Field/Value header)
+      top  — payment-period summary (no Field/Value header)
       then — OT details in HR columns; Jumlah OT = jam × day-type rate
     """
-    period = first_payment_rows(staff_df, first_date)
+    period = filter_payment_period(staff_df, period_num, first_date)
     rates = OT_RATES_RM_PER_HOUR.get(str(role).upper(), OT_RATES_RM_PER_HOUR["PIC"])
     metrics = (
         _hours_pay_for_rows(period, rates) if not period.empty else _empty_hours_pay()
@@ -967,9 +968,9 @@ def build_staff_first_payment_excel(
         }
     )
     payment_label = (
-        payment_period_label(first_date, 1)
+        payment_period_label(first_date, period_num)
         if first_date is not None
-        else "1st payment"
+        else f"{_ordinal(period_num)} payment"
     )
 
     summary_rows = [
@@ -993,7 +994,7 @@ def build_staff_first_payment_excel(
         ],
     ]
 
-    # OT details for 1st payment — HR claim columns + Jumlah OT + JUMLAH row.
+    # OT details for this payment period — HR claim columns + Jumlah OT + JUMLAH row.
     details = hr_export_detail_table(period, role)
     detail_headers = list(details.columns)
     detail_values = details.fillna("").astype(object).values.tolist()
@@ -1033,15 +1034,28 @@ def build_staff_first_payment_excel(
     return buffer.getvalue()
 
 
-def build_all_staff_first_payment_zip(
+def build_staff_first_payment_excel(
+    staff_df: pd.DataFrame,
+    role: str,
+    first_date: date | None,
+    staff_name: str,
+) -> bytes:
+    """1st-payment Excel (same layout as build_staff_payment_excel)."""
+    return build_staff_payment_excel(
+        staff_df, role, first_date, staff_name, period_num=1
+    )
+
+
+def build_all_staff_payment_zip(
     df: pd.DataFrame,
     role: str,
     first_date: date | None,
+    period_num: int = 1,
 ) -> tuple[bytes, int]:
     """
     ZIP of one Excel per staff.
 
-    Each file: 1st-payment Ringkasan + full Rekod OT details.
+    Each file: that payment period's summary + OT details.
     Filenames: 'PTD - NAME.xlsx' / 'PIC - NAME.xlsx'.
     Returns (zip_bytes, file_count).
     """
@@ -1053,9 +1067,18 @@ def build_all_staff_first_payment_zip(
             staff_df = filter_staff(df, name)
             if staff_df.empty:
                 continue
-            xlsx = build_staff_first_payment_excel(
-                staff_df, role, first_date, name
+            xlsx = build_staff_payment_excel(
+                staff_df, role, first_date, name, period_num=period_num
             )
             zf.writestr(f"{safe_export_stem(role, name)}.xlsx", xlsx)
             count += 1
     return buffer.getvalue(), count
+
+
+def build_all_staff_first_payment_zip(
+    df: pd.DataFrame,
+    role: str,
+    first_date: date | None,
+) -> tuple[bytes, int]:
+    """ZIP of 1st-payment Excel files, one per staff."""
+    return build_all_staff_payment_zip(df, role, first_date, period_num=1)

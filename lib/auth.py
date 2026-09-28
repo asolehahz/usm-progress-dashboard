@@ -89,12 +89,45 @@ def _normalize_unit_key(name: str) -> str:
     return " ".join(str(name or "").strip().lower().split())
 
 
+def _unit_key_variants(name: str) -> set[str]:
+    """
+    Match sheet Jabatan/Unit to secret keys even if Desasiswa/DS prefix differs.
+
+    e.g. 'Desasiswa Bakti Permai' ↔ 'Bakti Permai' ↔ 'DS Bakti Permai'
+    """
+    norm = _normalize_unit_key(name)
+    if not norm:
+        return set()
+    keys = {norm}
+    stripped = norm
+    for prefix in ("desasiswa ", "desasisiwa ", "ds ", "desa "):
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix) :].strip()
+            if stripped:
+                keys.add(stripped)
+    # Also allow with canonical Desasiswa prefix
+    if stripped and not stripped.startswith("desasiswa"):
+        keys.add(f"desasiswa {stripped}")
+        keys.add(f"ds {stripped}")
+    return {k for k in keys if k}
+
+
+def _password_for_unit(unit: str, passwords: dict[str, str]) -> str:
+    """Return password for a sheet unit, or '' if no secret key matches."""
+    unit_keys = _unit_key_variants(unit)
+    for key, pw in passwords.items():
+        if key in unit_keys or (_unit_key_variants(key) & unit_keys):
+            return pw
+    return ""
+
+
 def _pic_unit_password_map() -> dict[str, str]:
     """
     Secrets table [ot_pic_unit_passwords]:
       "Jabatan/Unit name" = "password"
 
-    Keys are matched case-insensitively to sheet Jabatan/Unit values.
+    Keys are matched case-insensitively to sheet Jabatan/Unit values
+    (Desasiswa / DS prefix optional).
     """
     try:
         raw = st.secrets.get("ot_pic_unit_passwords", {})
@@ -164,13 +197,27 @@ def pic_unit_login_form(unit_options: list[str]) -> bool:
         )
         return False
 
-    # Only show units that have a password configured (matched to sheet names)
-    configured_units = []
+    # Sheet units that have a matching password secret (prefix-tolerant).
+    configured_units = [
+        unit for unit in unit_options if _password_for_unit(unit, passwords)
+    ]
+
+    # Secret keys that do not match any sheet Jabatan/Unit (helps fix typos).
+    sheet_key_set: set[str] = set()
     for unit in unit_options:
-        if _normalize_unit_key(unit) in passwords:
-            configured_units.append(unit)
+        sheet_key_set |= _unit_key_variants(unit)
+    unmatched_secrets = sorted(
+        key
+        for key in passwords
+        if not (_unit_key_variants(key) & sheet_key_set)
+    )
 
     st.subheader("Sign in")
+    if unmatched_secrets:
+        st.caption(
+            "These secret unit names do not match the OT PIC sheet "
+            f"(fix spelling): {', '.join(unmatched_secrets)}"
+        )
     with st.form("ot_pic_unit_login"):
         mode = st.radio(
             "Access",
@@ -185,7 +232,9 @@ def pic_unit_login_form(unit_options: list[str]) -> bool:
             if not configured_units:
                 st.warning(
                     "No Jabatan/Unit passwords match the sheet. "
-                    "Check secret keys against Jabatan/Unit names."
+                    "In Streamlit secrets, add a key that matches the sheet "
+                    "Jabatan/Unit name (e.g. `Desasiswa Bakti Permai`). "
+                    f"Sheet units: {', '.join(unit_options) if unit_options else '(none)'}."
                 )
             selected_unit = st.selectbox(
                 "Jabatan/Unit",
@@ -206,7 +255,7 @@ def pic_unit_login_form(unit_options: list[str]) -> bool:
                 if not selected_unit or selected_unit == "—":
                     st.error("Select a Jabatan/Unit")
                 else:
-                    expected = passwords.get(_normalize_unit_key(selected_unit), "")
+                    expected = _password_for_unit(selected_unit, passwords)
                     if expected and password == expected:
                         st.session_state[_PIC_SCOPE_KEY] = "unit"
                         st.session_state[_PIC_UNIT_KEY] = selected_unit
