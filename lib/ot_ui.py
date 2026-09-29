@@ -12,7 +12,9 @@ from lib.ot_staff import (
     append_total_row,
     apply_whatsapp_telefon_links,
     attach_payment_periods,
+    build_all_staff_all_payments_zip,
     build_all_staff_payment_zip,
+    build_staff_all_payments_excel,
     build_staff_payment_excel,
     detail_table_for_display,
     earliest_ot_date,
@@ -92,6 +94,49 @@ def _render_hr_payment_downloads(
             file_name=f"{role} - {short} OT.zip",
             mime="application/zip",
             key=f"{key_prefix}_hr_p{period_num}_download_zip",
+        )
+
+
+def _render_hr_all_payments_download(
+    df: pd.DataFrame,
+    role: str,
+    first_date: date | None,
+    key_prefix: str,
+):
+    """Bulk ZIP: one Excel per staff covering every payment period so far."""
+    st.subheader("Download for HR — all payments so far")
+    st.caption(
+        "One Excel per staff: each payment period’s hours and pay, "
+        "then every OT row with a Payment column and a JUMLAH total. "
+        f"Files named like `{role} - NAME - all payments.xlsx`."
+    )
+    if df is None or df.empty or first_date is None:
+        st.info("No OT data available to export yet.")
+        return
+
+    n_staff = len(staff_names(df))
+    if n_staff == 0:
+        st.info("No staff OT rows to export.")
+        return
+
+    zip_key = f"{key_prefix}_hr_all_zip_bytes"
+    count_key = f"{key_prefix}_hr_all_zip_count"
+    if st.button(
+        f"Prepare ZIP ({n_staff} staff)",
+        key=f"{key_prefix}_hr_all_prepare_zip",
+    ):
+        with st.spinner("Building Excel files…"):
+            data, count = build_all_staff_all_payments_zip(df, role, first_date)
+        st.session_state[zip_key] = data
+        st.session_state[count_key] = count
+
+    if zip_key in st.session_state and st.session_state[zip_key]:
+        st.download_button(
+            label="Download",
+            data=st.session_state[zip_key],
+            file_name=f"{role} - all payments OT.zip",
+            mime="application/zip",
+            key=f"{key_prefix}_hr_all_download_zip",
         )
 
 
@@ -314,6 +359,16 @@ def render_ot_role_tab(
                     mime=xlsx_mime,
                     key=f"{key_prefix}_staff_p{period_num}_pay_xlsx",
                 )
+        all_xlsx = build_staff_all_payments_excel(
+            staff_df, role, first_date, staff
+        )
+        st.download_button(
+            label="Download all payments",
+            data=all_xlsx,
+            file_name=f"{safe_export_stem(role, staff)} - all payments.xlsx",
+            mime=xlsx_mime,
+            key=f"{key_prefix}_staff_all_pay_xlsx",
+        )
 
     st.subheader("OT details")
     tagged = attach_payment_periods(staff_df, first_date)
@@ -359,6 +414,7 @@ def render_overall_pay_role(
     _render_hr_payment_downloads(
         unit_df, role, first_date, key_prefix, period_num=2
     )
+    _render_hr_all_payments_download(unit_df, role, first_date, key_prefix)
 
     _show_payment_totals(
         unit_df,

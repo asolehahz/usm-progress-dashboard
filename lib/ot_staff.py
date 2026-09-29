@@ -803,10 +803,12 @@ def _format_jumlah_jam(jumlah, hours) -> str:
     return f"{hh}:{mm:02d}:{ss:02d}"
 
 
-def hr_export_detail_table(df: pd.DataFrame, role: str) -> pd.DataFrame:
+def hr_export_detail_table(
+    df: pd.DataFrame, role: str, *, include_payment: bool = False
+) -> pd.DataFrame:
     """
     HR Excel detail columns:
-      No. | Tarikh | Jenis Hari (…) | Masa Mula | Masa Tamat |
+      No. | Tarikh | [Payment] | Jenis Hari (…) | Masa Mula | Masa Tamat |
       Jumlah Jam | Jumlah OT (RM) | Catatan / Skop Kerja yang Dibuat
 
     Jumlah OT = decimal hours × rate for Jenis Hari (PTD/PIC rates).
@@ -822,6 +824,8 @@ def hr_export_detail_table(df: pd.DataFrame, role: str) -> pd.DataFrame:
         "Jumlah OT (RM)",
         "Catatan / Skop Kerja yang Dibuat",
     ]
+    if include_payment:
+        headers.insert(2, "Payment")
     if df is None or df.empty:
         return pd.DataFrame(columns=headers)
 
@@ -856,34 +860,65 @@ def hr_export_detail_table(df: pd.DataFrame, role: str) -> pd.DataFrame:
         if isinstance(jumlah_ot, (int, float)):
             total_ot += float(jumlah_ot)
 
-        rows.append(
-            {
-                "No.": i,
-                "Tarikh": str(row.get("Tarikh", "") or "").strip(),
-                "Jenis Hari (Biasa / Weekend / Cuti Umum)": jenis,
-                "Masa Mula": str(row.get("Masa mula", "") or "").strip(),
-                "Masa Tamat": str(row.get("Masa Tamat", "") or "").strip(),
-                "Jumlah Jam": _format_jumlah_jam(row.get("Jumlah"), hours_f),
-                "Jumlah OT (RM)": jumlah_ot,
-                "Catatan / Skop Kerja yang Dibuat": str(
-                    row.get("Skop kerja", "") or ""
-                ).strip(),
-            }
-        )
-
-    rows.append(
-        {
-            "No.": "",
-            "Tarikh": "",
-            "Jenis Hari (Biasa / Weekend / Cuti Umum)": "",
-            "Masa Mula": "",
-            "Masa Tamat": "JUMLAH",
-            "Jumlah Jam": _format_jumlah_jam("", total_hours),
-            "Jumlah OT (RM)": round(total_ot, 2),
-            "Catatan / Skop Kerja yang Dibuat": "",
+        record: dict[str, object] = {
+            "No.": i,
+            "Tarikh": str(row.get("Tarikh", "") or "").strip(),
+            "Jenis Hari (Biasa / Weekend / Cuti Umum)": jenis,
+            "Masa Mula": str(row.get("Masa mula", "") or "").strip(),
+            "Masa Tamat": str(row.get("Masa Tamat", "") or "").strip(),
+            "Jumlah Jam": _format_jumlah_jam(row.get("Jumlah"), hours_f),
+            "Jumlah OT (RM)": jumlah_ot,
+            "Catatan / Skop Kerja yang Dibuat": str(
+                row.get("Skop kerja", "") or ""
+            ).strip(),
         }
-    )
+        if include_payment:
+            record["Payment"] = str(row.get("Payment", "") or "").strip()
+        rows.append(record)
+
+    total_row: dict[str, object] = {
+        "No.": "",
+        "Tarikh": "",
+        "Jenis Hari (Biasa / Weekend / Cuti Umum)": "",
+        "Masa Mula": "",
+        "Masa Tamat": "JUMLAH",
+        "Jumlah Jam": _format_jumlah_jam("", total_hours),
+        "Jumlah OT (RM)": round(total_ot, 2),
+        "Catatan / Skop Kerja yang Dibuat": "",
+    }
+    if include_payment:
+        total_row["Payment"] = ""
+    rows.append(total_row)
     return pd.DataFrame(rows, columns=headers)
+
+
+def _workbook_from_sheet_rows(
+    sheet_rows: list[list[object]],
+    jumlah_sheet_row: int | None,
+    box_cols: tuple[int, ...] = (5, 6, 7),
+) -> bytes:
+    """Write padded rows to one OT sheet and bold the JUMLAH totals cells."""
+    width = max((len(r) for r in sheet_rows), default=2)
+    width = max(width, 2)
+    padded = [list(r) + [""] * (width - len(r)) for r in sheet_rows]
+    out_df = pd.DataFrame(padded)
+
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        out_df.to_excel(writer, sheet_name="OT", index=False, header=False)
+        if jumlah_sheet_row is not None:
+            from openpyxl.styles import Border, Font, Side
+
+            ws = writer.sheets["OT"]
+            bold = Font(bold=True)
+            thick = Side(style="medium", color="000000")
+            box = Border(left=thick, right=thick, top=thick, bottom=thick)
+            for col in range(1, width + 1):
+                ws.cell(row=jumlah_sheet_row, column=col).font = bold
+            for col in box_cols:
+                if 1 <= col <= width:
+                    ws.cell(row=jumlah_sheet_row, column=col).border = box
+    return buffer.getvalue()
 
 
 def staff_summary_for_display(df: pd.DataFrame) -> pd.DataFrame:
@@ -1009,29 +1044,111 @@ def build_staff_payment_excel(
         # Last detail row is JUMLAH (summary_rows + blank + header + n data rows)
         jumlah_sheet_row = len(sheet_rows)  # 1-based when written without header
 
-    # Pad rows so every row has the same width (Excel-friendly).
-    width = max((len(r) for r in sheet_rows), default=2)
-    width = max(width, 2)
-    padded = [list(r) + [""] * (width - len(r)) for r in sheet_rows]
-    out_df = pd.DataFrame(padded)
+    # Box Masa Tamat (JUMLAH) + Jumlah Jam + Jumlah OT (RM).
+    return _workbook_from_sheet_rows(sheet_rows, jumlah_sheet_row, (5, 6, 7))
 
+
+def build_staff_all_payments_excel(
+    staff_df: pd.DataFrame,
+    role: str,
+    first_date: date | None,
+    staff_name: str,
+) -> bytes:
+    """
+    One Excel for every payment period recorded so far.
+
+    Summary lists each period's hours and pay, then an overall total.
+    Detail table includes every OT row, with a Payment column and one JUMLAH.
+    """
+    tagged = attach_payment_periods(staff_df, first_date)
+    rates = OT_RATES_RM_PER_HOUR.get(str(role).upper(), OT_RATES_RM_PER_HOUR["PIC"])
+    last = latest_ot_date(tagged)
+    period_nums = periods_through_latest(first_date, last)
+    if not period_nums and first_date is not None:
+        period_nums = [1]
+
+    telefon = first_nonempty_value(
+        staff_df.get("No Telefon", pd.Series(dtype=str))
+    ) or ""
+    ic = first_nonempty_value(staff_df.get("No IC", pd.Series(dtype=str))) or ""
+    units = sorted(
+        {
+            str(v).strip()
+            for v in staff_df.get("Jabatan/Unit", pd.Series(dtype=str))
+            if str(v).strip()
+        }
+    )
+
+    summary_rows: list[list[object]] = [
+        ["Role", str(role).upper()],
+        ["Nama Staf", staff_name],
+        ["No Telefon", telefon],
+        ["No IC", ic],
+        ["Jabatan/Unit", ", ".join(units)],
+        ["Payment", "All payments so far"],
+        [
+            "Rate Biasa / Weekend / Cuti (RM/jam)",
+            f"{rates['Biasa']} / {rates['Hujung Minggu']} / {rates['Cuti Umum']}",
+        ],
+    ]
+    overall_hours = 0.0
+    overall_pay = 0.0
+    for num in period_nums:
+        part = filter_payment_period(tagged, num, first_date)
+        metrics = (
+            _hours_pay_for_rows(part, rates) if not part.empty else _empty_hours_pay()
+        )
+        label = (
+            payment_period_label(first_date, num)
+            if first_date is not None
+            else f"{_ordinal(num)} payment"
+        )
+        summary_rows.append([label, ""])
+        summary_rows.append(["Hours", metrics["Total Hours"]])
+        summary_rows.append(["Pay (RM)", metrics["Total Pay (RM)"]])
+        overall_hours += float(metrics["Total Hours"])
+        overall_pay += float(metrics["Total Pay (RM)"])
+    summary_rows.append(["Overall Total Hours", round(overall_hours, 2)])
+    summary_rows.append(["Overall Total Pay (RM)", round(overall_pay, 2)])
+
+    details = hr_export_detail_table(tagged, role, include_payment=True)
+    detail_headers = list(details.columns)
+    detail_values = details.fillna("").astype(object).values.tolist()
+
+    sheet_rows: list[list[object]] = [list(row) for row in summary_rows]
+    sheet_rows.append([])
+    jumlah_sheet_row: int | None = None
+    if detail_headers:
+        sheet_rows.append(detail_headers)
+        sheet_rows.extend(detail_values)
+        jumlah_sheet_row = len(sheet_rows)
+
+    # Payment column shifts JUMLAH / Jam / OT to columns 6, 7, 8.
+    return _workbook_from_sheet_rows(sheet_rows, jumlah_sheet_row, (6, 7, 8))
+
+
+def build_all_staff_all_payments_zip(
+    df: pd.DataFrame,
+    role: str,
+    first_date: date | None,
+) -> tuple[bytes, int]:
+    """ZIP of one all-payments Excel per staff. Returns (zip_bytes, file_count)."""
+    names = staff_names(df)
     buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        out_df.to_excel(writer, sheet_name="OT", index=False, header=False)
-        if jumlah_sheet_row is not None:
-            from openpyxl.styles import Border, Font, Side
-
-            ws = writer.sheets["OT"]
-            bold = Font(bold=True)
-            thick = Side(style="medium", color="000000")
-            box = Border(left=thick, right=thick, top=thick, bottom=thick)
-            # Bold JUMLAH label + Jumlah Jam + Jumlah OT (RM) cells (cols E–G).
-            for col in range(1, width + 1):
-                cell = ws.cell(row=jumlah_sheet_row, column=col)
-                cell.font = bold
-            for col in (5, 6, 7):  # Masa Tamat / Jumlah Jam / Jumlah OT (RM)
-                ws.cell(row=jumlah_sheet_row, column=col).border = box
-    return buffer.getvalue()
+    count = 0
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name in names:
+            staff_df = filter_staff(df, name)
+            if staff_df.empty:
+                continue
+            xlsx = build_staff_all_payments_excel(
+                staff_df, role, first_date, name
+            )
+            zf.writestr(
+                f"{safe_export_stem(role, name)} - all payments.xlsx", xlsx
+            )
+            count += 1
+    return buffer.getvalue(), count
 
 
 def build_staff_first_payment_excel(
