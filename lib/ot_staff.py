@@ -10,7 +10,7 @@ from io import BytesIO
 
 import pandas as pd
 
-from app_config import OT_COLUMNS, OT_RATES_RM_PER_HOUR
+from app_config import OT_COLUMNS, OT_RATES_RM_PER_HOUR, PIC_PAID_PERIODS
 
 
 def _normalize_day_type(value: str) -> str:
@@ -360,6 +360,23 @@ def payment_period_label(first_date: date, period_num: int) -> str:
         f"{_ordinal(period_num)} payment "
         f"({_fmt_dmy(start)} – {_fmt_dmy(end)})"
     )
+
+
+def payment_period_is_done(role: str, first_date: date | None, period_num: int) -> bool:
+    """True when this role's payment cycle is already paid (PIC 1–25 Aug 2026)."""
+    if str(role or "").strip().upper() != "PIC" or first_date is None:
+        return False
+    try:
+        start, end = payment_period_bounds(first_date, period_num)
+    except ValueError:
+        return False
+    for paid_start, paid_end in PIC_PAID_PERIODS:
+        window_start = date(*paid_start)
+        window_end = date(*paid_end)
+        # Period may start after 1 Aug (first recorded OT) and still be that paid window.
+        if window_start <= start <= end <= window_end:
+            return True
+    return False
 
 
 def payment_period_number_for_date(d: date, first_date: date) -> int | None:

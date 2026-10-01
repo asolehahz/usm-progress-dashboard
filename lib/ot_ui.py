@@ -24,6 +24,7 @@ from lib.ot_staff import (
     first_nonempty_value,
     jabatan_units,
     latest_ot_date,
+    payment_period_is_done,
     payment_period_label,
     payment_period_options,
     payment_period_ot_summary,
@@ -234,7 +235,26 @@ def _show_payment_totals(
         st.info("No payment totals to show.")
         return summary
 
+    statuses: list[str] = []
+    for _, row in summary.iterrows():
+        num = row.get("Payment #")
+        label = str(row.get("Payment", "") or "").strip().lower()
+        if label == "overall total" or num is None or (
+            isinstance(num, float) and pd.isna(num)
+        ):
+            statuses.append("")
+            continue
+        try:
+            done = payment_period_is_done(role, first_date, int(num))
+        except (TypeError, ValueError):
+            done = False
+        statuses.append("Done" if done else "")
     display = summary.drop(columns=["Payment #"], errors="ignore")
+    display.insert(1, "Status", statuses)
+
+    if str(role).upper() == "PIC" and any(s == "Done" for s in statuses):
+        st.success("Payment done: 1 August 2026 – 25 August 2026")
+
     period_rows = summary[
         summary["Payment"].astype(str).str.strip().str.lower() != "overall total"
     ].copy()
@@ -261,6 +281,8 @@ def _show_payment_totals(
             if first_date is not None
             else f"Payment {num_i}"
         )
+        if payment_period_is_done(role, first_date, num_i):
+            short = f"{short} — Done"
         metric_items.append(
             (f"{short} (RM)", f"{float(row['Total Pay (RM)']):,.2f}")
         )

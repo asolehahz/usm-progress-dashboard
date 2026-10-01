@@ -198,6 +198,12 @@ OT_COLUMNS = [
     "Lokasi",
     "Skop kerja",
 ]
+# PIC payments already paid (inclusive). Shown as Done on OT PIC screens.
+# 1 Aug 2026 – 25 Aug 2026 is the first payment cycle.
+PIC_PAID_PERIODS: list[tuple[tuple[int, int, int], tuple[int, int, int]]] = [
+    ((2026, 8, 1), (2026, 8, 25)),
+]
+
 OT_RATES_RM_PER_HOUR = {
     "PTD": {
         "Biasa": 25.43,
