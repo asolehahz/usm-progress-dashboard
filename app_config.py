@@ -197,6 +197,7 @@ OT_COLUMNS = [
     "Jumlah",
     "Lokasi",
     "Skop kerja",
+    "Remark",
 ]
 # PIC payments already paid (inclusive). Shown as Done on OT PIC screens.
 # 1 Aug 2026 – 25 Aug 2026 is the first payment cycle.

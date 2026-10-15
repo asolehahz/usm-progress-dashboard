@@ -49,6 +49,20 @@ def _parse_hours(value) -> float | None:
         return None
 
 
+def _remark_is_paid(value) -> bool:
+    """Google Sheet checkbox: ticked exports as TRUE. Ticked = payment already done."""
+    text = str(value or "").strip().lower()
+    return text in {"true", "yes", "y", "1", "paid", "done", "tick", "ticked", "x"}
+
+
+def unpaid_ot_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Rows whose Remark checkbox is not ticked."""
+    if df is None or df.empty or "Paid" not in df.columns:
+        return df
+    paid = df["Paid"].map(lambda v: bool(v) if v is not None and not (isinstance(v, float) and pd.isna(v)) else False)
+    return df.loc[~paid].copy()
+
+
 def _parse_ot_date(value) -> datetime | None:
     text = str(value or "").strip()
     if not text:
@@ -114,6 +128,8 @@ def parse_ot_sheet(raw: pd.DataFrame) -> pd.DataFrame:
             col_map["Lokasi"] = idx
         elif "skop" in low:
             col_map["Skop kerja"] = idx
+        elif low in {"remark", "remarks"}:
+            col_map["Remark"] = idx
 
     rows: list[dict[str, object]] = []
     for r in range(header_row_idx + 1, len(raw)):
@@ -139,6 +155,10 @@ def parse_ot_sheet(raw: pd.DataFrame) -> pd.DataFrame:
         hours = _parse_hours(jumlah)
         parsed_date = _parse_ot_date(tarikh)
         month_label = parsed_date.strftime("%B %Y") if parsed_date else ""
+        remark_raw = (
+            str(row.iloc[col_map["Remark"]]).strip() if "Remark" in col_map else ""
+        )
+        paid = _remark_is_paid(remark_raw)
         rows.append(
             {
                 "No": (
@@ -188,6 +208,8 @@ def parse_ot_sheet(raw: pd.DataFrame) -> pd.DataFrame:
                     if "Skop kerja" in col_map
                     else ""
                 ),
+                "Remark": "Paid" if paid else "",
+                "Paid": paid,
                 "Hours": hours if hours is not None else 0.0,
                 "Month": month_label,
                 "Date_parsed": parsed_date,
@@ -657,6 +679,10 @@ def monthly_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
 
 
 def _hours_pay_for_rows(part: pd.DataFrame, rates: dict[str, float]) -> dict[str, float]:
+    """Hours and pay for unpaid rows only (ticked Remark is already paid)."""
+    part = unpaid_ot_rows(part)
+    if part is None or part.empty or "Jenis Hari" not in part.columns:
+        return _empty_hours_pay()
     h_biasa = float(part.loc[part["Jenis Hari"] == "Biasa", "Hours"].sum())
     h_week = float(part.loc[part["Jenis Hari"] == "Hujung Minggu", "Hours"].sum())
     h_hol = float(part.loc[part["Jenis Hari"] == "Cuti Umum", "Hours"].sum())
@@ -794,6 +820,7 @@ def detail_table_for_display(df: pd.DataFrame) -> pd.DataFrame:
         "Skop kerja",
         "Gred/Jawatan",
         "Jabatan/Unit",
+        "Remark",
     ]
     if df is None or df.empty:
         return pd.DataFrame(columns=cols)
@@ -843,6 +870,11 @@ def hr_export_detail_table(
     ]
     if include_payment:
         headers.insert(2, "Payment")
+    if df is None or df.empty:
+        return pd.DataFrame(columns=headers)
+
+    # Claim lines are unpaid rows only. A ticked Remark is already paid.
+    df = unpaid_ot_rows(df)
     if df is None or df.empty:
         return pd.DataFrame(columns=headers)
 

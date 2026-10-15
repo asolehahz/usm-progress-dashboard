@@ -202,7 +202,7 @@ def _show_payment_totals(
     telefon: str | None = None,
     ic: str | None = None,
 ):
-    """Summary metrics: overall total + each payment (1st, 2nd, …), then table."""
+    """Summary metrics: unpaid totals per payment period, then table."""
     tagged = attach_payment_periods(df, first_date)
     summary = payment_period_ot_summary(
         tagged,
@@ -213,6 +213,9 @@ def _show_payment_totals(
         only_present=True,
     )
     st.subheader(title)
+    st.caption(
+        "Pay totals are unpaid only. A ticked Remark in the sheet means that row is already paid."
+    )
     if telefon is not None or ic is not None:
         tel_text = telefon if telefon not in (None, "") else "—"
         ic_text = ic if ic not in (None, "") else "—"
