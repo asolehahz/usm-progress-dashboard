@@ -214,7 +214,7 @@ def _show_payment_totals(
     )
     st.subheader(title)
     st.caption(
-        "Pay totals are unpaid only. A ticked Remark in the sheet means that row is already paid."
+        "Unpaid is what is still to pay. A ticked Remark is already paid and is not included in Unpaid."
     )
     if telefon is not None or ic is not None:
         tel_text = telefon if telefon not in (None, "") else "—"
@@ -253,6 +253,7 @@ def _show_payment_totals(
             done = False
         statuses.append("Done" if done else "")
     display = summary.drop(columns=["Payment #"], errors="ignore")
+    display = display.rename(columns={"Total Pay (RM)": "Unpaid (RM)"})
     display.insert(1, "Status", statuses)
 
     if str(role).upper() == "PIC" and any(s == "Done" for s in statuses):
@@ -267,11 +268,17 @@ def _show_payment_totals(
     overall_hours = (
         float(period_rows["Total Hours"].sum()) if not period_rows.empty else 0.0
     )
+    already_paid = (
+        float(period_rows["Already paid (RM)"].sum())
+        if not period_rows.empty and "Already paid (RM)" in period_rows.columns
+        else 0.0
+    )
 
-    # Highlight overall total + 1st payment (then 2nd, 3rd… if present)
+    # Highlight unpaid total, amount already ticked as paid, then each payment
     metric_items: list[tuple[str, str]] = [
-        ("Overall total (RM)", f"{overall_pay:,.2f}"),
-        ("Overall total (hours)", f"{overall_hours:.2f}"),
+        ("Unpaid (RM)", f"{overall_pay:,.2f}"),
+        ("Already paid (RM)", f"{already_paid:,.2f}"),
+        ("Unpaid (hours)", f"{overall_hours:.2f}"),
     ]
     for _, row in period_rows.sort_values("Payment #").iterrows():
         num = row.get("Payment #")
@@ -396,6 +403,7 @@ def render_ot_role_tab(
         )
 
     st.subheader("OT details")
+    st.caption("Remark = Paid means that row is already paid and is left out of Unpaid.")
     tagged = attach_payment_periods(staff_df, first_date)
     _show_ot_dataframe(detail_table_for_display(tagged))
 
@@ -464,17 +472,25 @@ def render_overall_pay_role(
 
     staff_summary = append_total_row(staff_summary, "Nama Staf", label="Overall total")
     data_rows = staff_summary[staff_summary["Nama Staf"] != "Overall total"]
-    c1, c2, c3 = st.columns(3)
+    already_paid = (
+        float(data_rows["Already paid (RM)"].sum())
+        if not data_rows.empty and "Already paid (RM)" in data_rows.columns
+        else 0.0
+    )
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Staff", len(data_rows))
     c2.metric(
-        "Overall total (hours)",
+        "Unpaid (hours)",
         f"{float(data_rows['Total Hours'].sum()) if not data_rows.empty else 0:.2f}",
     )
     c3.metric(
-        "Overall total (RM)",
+        "Unpaid (RM)",
         f"{float(data_rows['Total Pay (RM)'].sum()) if not data_rows.empty else 0:,.2f}",
     )
-    _show_ot_dataframe(staff_summary_for_display(staff_summary))
+    c4.metric("Already paid (RM)", f"{already_paid:,.2f}")
+    shown = staff_summary_for_display(staff_summary)
+    shown = shown.rename(columns={"Total Pay (RM)": "Unpaid (RM)"})
+    _show_ot_dataframe(shown)
 
 
 def render_overall_bayaran(

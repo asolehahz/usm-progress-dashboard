@@ -55,12 +55,28 @@ def _remark_is_paid(value) -> bool:
     return text in {"true", "yes", "y", "1", "paid", "done", "tick", "ticked", "x"}
 
 
+def _paid_mask(df: pd.DataFrame) -> pd.Series:
+    return df["Paid"].map(
+        lambda v: bool(v)
+        if v is not None and not (isinstance(v, float) and pd.isna(v))
+        else False
+    )
+
+
 def unpaid_ot_rows(df: pd.DataFrame) -> pd.DataFrame:
     """Rows whose Remark checkbox is not ticked."""
     if df is None or df.empty or "Paid" not in df.columns:
         return df
-    paid = df["Paid"].map(lambda v: bool(v) if v is not None and not (isinstance(v, float) and pd.isna(v)) else False)
-    return df.loc[~paid].copy()
+    return df.loc[~_paid_mask(df)].copy()
+
+
+def paid_ot_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Rows whose Remark checkbox is ticked (payment already done)."""
+    if df is None or df.empty or "Paid" not in df.columns:
+        if df is None:
+            return df
+        return df.iloc[0:0].copy()
+    return df.loc[_paid_mask(df)].copy()
 
 
 def _parse_ot_date(value) -> datetime | None:
@@ -565,6 +581,7 @@ def payment_period_ot_summary(
         "Pay Hujung Minggu (RM)",
         "Pay Cuti Umum (RM)",
         "Total Pay (RM)",
+        "Already paid (RM)",
     ]
     if df is None or df.empty:
         return pd.DataFrame(columns=empty_cols)
@@ -611,7 +628,19 @@ def payment_period_ot_summary(
         metrics = (
             _hours_pay_for_rows(part, rates) if not part.empty else _empty_hours_pay()
         )
-        rows.append({"Payment": label, "Payment #": num, **metrics})
+        paid_metrics = (
+            _hours_pay_for_rows(paid_ot_rows(part), rates, unpaid_only=False)
+            if not part.empty
+            else _empty_hours_pay()
+        )
+        rows.append(
+            {
+                "Payment": label,
+                "Payment #": num,
+                **metrics,
+                "Already paid (RM)": paid_metrics["Total Pay (RM)"],
+            }
+        )
 
     out_cols = ["Payment", "Payment #"] + empty_cols[1:]
     out = pd.DataFrame(rows, columns=out_cols) if rows else pd.DataFrame(columns=out_cols)
@@ -678,9 +707,12 @@ def monthly_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _hours_pay_for_rows(part: pd.DataFrame, rates: dict[str, float]) -> dict[str, float]:
-    """Hours and pay for unpaid rows only (ticked Remark is already paid)."""
-    part = unpaid_ot_rows(part)
+def _hours_pay_for_rows(
+    part: pd.DataFrame, rates: dict[str, float], *, unpaid_only: bool = True
+) -> dict[str, float]:
+    """Hours and pay. Default is unpaid rows only (ticked Remark is already paid)."""
+    if unpaid_only:
+        part = unpaid_ot_rows(part)
     if part is None or part.empty or "Jenis Hari" not in part.columns:
         return _empty_hours_pay()
     h_biasa = float(part.loc[part["Jenis Hari"] == "Biasa", "Hours"].sum())
@@ -770,6 +802,7 @@ def all_staff_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
         "Pay Hujung Minggu (RM)",
         "Pay Cuti Umum (RM)",
         "Total Pay (RM)",
+        "Already paid (RM)",
     ]
     if df is None or df.empty or "Nama Staf" not in df.columns:
         return pd.DataFrame(columns=empty_cols)
@@ -785,6 +818,9 @@ def all_staff_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
             }
         )
         metrics = _hours_pay_for_rows(part, rates)
+        paid_metrics = _hours_pay_for_rows(
+            paid_ot_rows(part), rates, unpaid_only=False
+        )
         rows.append(
             {
                 "Nama Staf": staff,
@@ -794,6 +830,7 @@ def all_staff_ot_summary(df: pd.DataFrame, role: str) -> pd.DataFrame:
                 "No IC": first_nonempty_value(part.get("No IC", pd.Series(dtype=str))),
                 "Jabatan/Unit": ", ".join(units) if units else "",
                 **metrics,
+                "Already paid (RM)": paid_metrics["Total Pay (RM)"],
             }
         )
     if not rows:
@@ -810,6 +847,7 @@ def detail_table_for_display(df: pd.DataFrame) -> pd.DataFrame:
     cols = [
         "No",
         "Tarikh",
+        "Remark",
         "Payment",
         "Jenis Hari",
         "Masa mula",
@@ -820,7 +858,6 @@ def detail_table_for_display(df: pd.DataFrame) -> pd.DataFrame:
         "Skop kerja",
         "Gred/Jawatan",
         "Jabatan/Unit",
-        "Remark",
     ]
     if df is None or df.empty:
         return pd.DataFrame(columns=cols)
